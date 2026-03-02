@@ -1,16 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
-import {
-  supabase, dbReady,
-  dbGetUsers, dbUpdateUser, dbInsertUser, dbDeleteUser,
-  dbGetClients, dbUpsertClient,
-  dbGetContent, dbUpsertContent,
-  dbGetCalendar, dbUpsertCalendar,
-  dbGetLeaves, dbUpsertLeave,
-  dbGetAttendance, dbUpsertAttendance,
-  dbGetMessages, dbInsertMessage,
-  dbGetPlannerEvents, dbUpsertPlannerEvent, dbDeletePlannerEvent,
-  subscribeToMessages,
-} from "./supabase.js";
+import { useState, useEffect, useRef } from "react";
 
 // ─── DATA ────────────────────────────────────────────────────────────────────
 const INITIAL_USERS = [
@@ -30,59 +18,44 @@ const nowStr   = () => new Date().toLocaleTimeString("en-IN",{hour:"2-digit",min
 const todayStr = () => new Date().toLocaleDateString("en-IN",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
 const T = todayISO();
 
-const initialClients = [
-  {id:1,name:"Lumière Cosmetics",contact:"Aisha Kapoor",email:"aisha@lumiere.com",phone:"+91 98765 43210",services:["Social Media Management","Branding"],status:"active",onboarded:true,socialAccess:{instagram:"@lumiere_beauty",facebook:"Lumière Official"},enquiryDate:"2024-01-10",dealDate:"2024-01-20"},
-  {id:2,name:"Verde Architecture",contact:"Rohan Gupta",email:"rohan@verde.in",phone:"+91 87654 32109",services:["Design","Video Editing"],status:"active",onboarded:true,socialAccess:{},enquiryDate:"2024-02-05",dealDate:"2024-02-15"},
-  {id:3,name:"Noor Jewels",contact:"Fatima Shaikh",email:"fatima@noor.com",phone:"+91 76543 21098",services:["Social Media Management"],status:"enquiry",onboarded:false,socialAccess:{},enquiryDate:"2024-03-01",dealDate:null},
-];
-const initialContent = [
-  {id:1,clientId:1,title:"Spring Collection Launch",execCaption:"Spring is here! ✨ #lumiere",adminCaption:"Embrace the bloom. ✨ Our new Spring Collection. #LumièreBeauty",adminComment:"",scheduledDate:T,scheduledTime:"10:00",status:"approved_client",execId:3,mediaType:null,mediaName:null,mediaDataUrl:null,createdAt:"2024-03-28",postedAt:null},
-  {id:2,clientId:1,title:"Product Highlight – Serum",execCaption:"Glow from within. #skincare",adminCaption:"",adminComment:"",scheduledDate:T,scheduledTime:"18:00",status:"pending_admin",execId:3,mediaType:null,mediaName:null,mediaDataUrl:null,createdAt:"2024-04-01",postedAt:null},
-  {id:3,clientId:2,title:"Studio Showcase",execCaption:"Amazing project complete!",adminCaption:"Where architecture meets artistry.",adminComment:"Good comp, tweak caption",scheduledDate:T,scheduledTime:"12:00",status:"approved_client",execId:4,mediaType:null,mediaName:null,mediaDataUrl:null,createdAt:"2024-04-02",postedAt:null},
-];
-const initialCalendar = [
-  {id:1,clientId:1,month:"April 2024",posts:["Spring Collection Launch","Product Highlight","Brand Story","Testimonial Post"],status:"approved",createdBy:3,approvedBy:1},
-];
-const initialLeaves = [
-  {id:1,userId:3,reason:"Family function",from:"2024-04-10",to:"2024-04-11",status:"approved",appliedOn:"2024-04-01"},
-  {id:2,userId:4,reason:"Medical appointment",from:"2024-04-15",to:"2024-04-15",status:"pending",appliedOn:"2024-04-05"},
-  {id:3,userId:2,reason:"Personal work",from:"2024-04-22",to:"2024-04-23",status:"approved",appliedOn:"2024-04-10"},
-];
-const initialAttendance = (() => {
-  const base=[];
-  const workDays=[1,2,3,4,7,8,9,10,14,16,17,18,19,21,24,25,26,28,29,30];
-  workDays.forEach(d=>{
-    const date=`2024-04-${String(d).padStart(2,"0")}`;
-    [2,3,4].forEach(uid=>{
-      const lh=8+Math.floor(Math.random()*2),lm=Math.floor(Math.random()*30);
-      const oh=17+Math.floor(Math.random()*2),om=Math.floor(Math.random()*60);
-      const fmt=(h,m)=>`${String(h%12||12).padStart(2,"0")}:${String(m).padStart(2,"0")} ${h<12?"AM":"PM"}`;
-      base.push({userId:uid,date,login:fmt(lh,lm),logout:fmt(oh,om)});
-    });
-  });
-  return base;
-})();
-const initialPlannerEvents = {
-  1:[{id:1,title:"Client Strategy Review",date:T,startHour:10,endHour:11,color:"#C4954A"}],
-  2:[{id:1,title:"Content Approval Batch",date:T,startHour:14,endHour:15,color:"#2E5F8A"}],
-  3:[{id:1,title:"Lumière Photo Shoot",date:T,startHour:9,endHour:11,color:"#4A7C59"}],
-  4:[{id:1,title:"Reel editing – Verde",date:T,startHour:15,endHour:17,color:"#9B3A3A"}],
-};
+const initialClients = [];
+const initialContent = [];
+const initialCalendar = [];
+const initialLeaves = [];
+const initialAttendance = [];
+const initialPlannerEvents = {};
+const initialMessages = [];
 
-// Initial chat messages
-const initialMessages = [
-  {id:1,fromId:1,toId:"all",text:"Good morning team! Sync at 11am today.",time:"09:05 AM",date:T},
-  {id:2,fromId:3,toId:"all",text:"Sure! Lumière shoot brief is ready.",time:"09:12 AM",date:T},
-  {id:3,fromId:2,toId:"all",text:"Content approvals batch going out by noon.",time:"09:20 AM",date:T},
-  {id:4,fromId:4,toId:"all",text:"Verde reel will be done by EOD 🎬",time:"09:45 AM",date:T},
-];
+// ── localStorage persistence helpers ─────────────────────────────────────────
+function lsGet(key, fallback) {
+  try {
+    if(typeof localStorage === "undefined") return fallback;
+    const v = localStorage.getItem(key);
+    return v ? JSON.parse(v) : fallback;
+  } catch { return fallback; }
+}
+function lsSet(key, val) {
+  try {
+    if(typeof localStorage === "undefined") return;
+    localStorage.setItem(key, JSON.stringify(val));
+  } catch {}
+}
 
 // ─── AI helpers ───────────────────────────────────────────────────────────────
 async function callClaude(prompt, maxTokens=1200) {
+  // API key: set VITE_ANTHROPIC_API_KEY in Vercel environment variables
+  const apiKey = (typeof window !== "undefined" && window.__ANTHROPIC_KEY__) || null;
+  const headers = {"Content-Type":"application/json"};
+  if(apiKey) headers["x-api-key"] = apiKey;
   const res = await fetch("https://api.anthropic.com/v1/messages",{
-    method:"POST",headers:{"Content-Type":"application/json"},
+    method:"POST",
+    headers,
     body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:maxTokens,messages:[{role:"user",content:prompt}]})
   });
+  if(!res.ok){
+    const err=await res.json().catch(()=>({}));
+    throw new Error(err.error?.message||`API error ${res.status}`);
+  }
   const d = await res.json();
   return d.content?.[0]?.text || "";
 }
@@ -91,13 +64,38 @@ async function generateCaption(desc,clientName,service){
   catch{ return "Caption generation failed."; }
 }
 async function generateAssessment(emp,attRecs,leaveRecs,contentItems){
-  const present=attRecs.length, total=22;
-  const prompt=`HR performance assessment for ${emp.name} (${emp.role}), April 2024.
-Attendance: ${present}/${total} days present. Leaves: ${leaveRecs.length} (${leaveRecs.filter(l=>l.status==="approved").length} approved).
-Content: ${contentItems.length} items total, ${contentItems.filter(c=>c.status==="posted").length} posted, ${contentItems.filter(c=>c.status==="approved_client").length} approved.
-Write structured report with ## headers: Overall Performance Score (X/10), Attendance & Punctuality, Work Output, Strengths (bullets), Areas for Improvement (bullets), Recommendation. Be concise and data-driven.`;
+  const present=attRecs.length;
+  const now=new Date();
+  const period=`${now.toLocaleString("en-IN",{month:"long",year:"numeric"})}`;
+  const workDaysThisMonth=22;
+  const prompt=`You are an HR assistant. Write a professional employee performance assessment.
+
+Employee: ${emp.name}
+Role: ${emp.role}
+Period: ${period}
+
+Data:
+- Attendance: ${present} days present out of ~${workDaysThisMonth} working days
+- Leaves taken: ${leaveRecs.length} (${leaveRecs.filter(l=>l.status==="approved").length} approved, ${leaveRecs.filter(l=>l.status==="pending").length} pending)
+- Content items created: ${contentItems.length}
+- Posted: ${contentItems.filter(c=>c.status==="posted").length}
+- Approved by client: ${contentItems.filter(c=>c.status==="approved_client").length}
+- Pending review: ${contentItems.filter(c=>["pending_admin","pending_superadmin"].includes(c.status)).length}
+
+Write a structured assessment with these sections using ## headers:
+## Overall Performance Score
+Give a score out of 10 with brief justification.
+## Attendance & Punctuality
+## Content Output & Quality
+## Strengths
+Use bullet points.
+## Areas for Improvement
+Use bullet points.
+## Recommendation
+
+Be professional, specific to the data, and constructive. Keep it under 400 words.`;
   try{ return await callClaude(prompt,1500); }
-  catch{ return "Assessment generation failed."; }
+  catch(e){ return "Assessment generation failed. Please check your API configuration."; }
 }
 
 function parseMarkdown(md){
@@ -130,7 +128,7 @@ const getStyles = (dark) => `
     --sidebar-w:248px;--header-h:62px;
     --chat-w:320px;
   }
-  body{font-family:'DM Sans',sans-serif;background:var(--cream);color:var(--ink);}
+  body{font-family:'DM Sans',sans-serif;background:var(--cream);color:var(--ink);font-size:14.5px;line-height:1.55;}
   .serif{font-family:'Cormorant Garamond',serif;}
   ::-webkit-scrollbar{width:4px;}::-webkit-scrollbar-track{background:var(--cream-dark);}::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px;}
 
@@ -697,7 +695,7 @@ function ChatPanel({ user, users, messages, setMessages, onlineIds, open }) {
 
   return(
     <>
-      {call&&<VideoCallModal participants={call.participants} onEnd={()=>setCall(null)} />}
+      {call&&<VideoCallModal participants={call.participants} callType={call.type} onEnd={()=>setCall(null)} />}
       <div className={`chat-panel ${open?"open":""}`}>
         <div style={{height:4,background:"linear-gradient(90deg,#C4954A,#E8C88A,#4A7C59,#2E5F8A)",flexShrink:0}} />
         {!thread?(
@@ -718,7 +716,7 @@ function ChatPanel({ user, users, messages, setMessages, onlineIds, open }) {
                   <div className="chat-contact-last">Team channel</div>
                 </div>
                 <div className="flex items-center gap-8">
-                  <button className="call-btn call-btn-video" onClick={e=>{e.stopPropagation();startCall("video",others);}}>📹 Meet</button>
+                  <button className="call-btn call-btn-video" onClick={e=>{e.stopPropagation();startCall("video",others);}} title="Video Meet">📹</button>
                 </div>
               </div>
               {others.map(u=>{
@@ -732,7 +730,7 @@ function ChatPanel({ user, users, messages, setMessages, onlineIds, open }) {
                     </div>
                     <div className="chat-contact-info">
                       <div className="chat-contact-name">{u.displayName||u.username}</div>
-                      <div className="chat-contact-last">{isOnline?"● Active now":"○ Away"}</div>
+                      <div className="chat-contact-last">{isOnline?"● Online":"○ Offline"}</div>
                     </div>
                     <button className="call-btn call-btn-video" style={{fontSize:9}} onClick={e=>{e.stopPropagation();startCall("video",[u]);}}>📹</button>
                   </div>
@@ -754,7 +752,7 @@ function ChatPanel({ user, users, messages, setMessages, onlineIds, open }) {
               )}
               <div style={{flex:1}}>
                 <div className="chat-contact-name">{thread==="all"?"All Hands":(getUserById(thread)?.displayName||getUserById(thread)?.username)}</div>
-                <div style={{fontSize:10,color:"var(--ink-muted)"}}>{thread==="all"?`${onlineIds.length} active`:onlineIds.includes(thread)?"Active now":"Away"}</div>
+                <div style={{fontSize:10,color:"var(--ink-muted)"}}>{thread==="all"?`${onlineIds.length} active`:onlineIds.includes(thread)?"● Online":"○ Offline"}</div>
               </div>
               <div className="flex gap-8">
                 <button className="call-btn call-btn-audio" onClick={()=>startCall("audio",thread==="all"?others:[getUserById(thread)])}>📞</button>
@@ -968,16 +966,20 @@ function TodaysTasks({ user, content, setContent, clients }) {
   );
 }
 
-function Dashboard({ user, clients, content, setContent, attendance, dark }) {
+function Dashboard({ user, clients, content, setContent, attendance, dark, plannerEvents={}, calendar=[] }) {
   const myContent=user.role==="executive"?content.filter(c=>c.execId===user.id):content;
-  const pending=content.filter(c=>(user.role==="admin"&&c.status==="pending_admin")||(user.role==="superadmin"&&c.status==="pending_superadmin"));
+  const pending=content.filter(c=>(user.role==="admin"&&c.status==="pending_admin")||(user.role==="superadmin"&&(c.status==="pending_superadmin"||c.status==="pending_admin")));
   const todayAtt=attendance.filter(a=>a.date===todayISO());
+  const today=todayISO();
+  const myEvents=(plannerEvents[user.id]||[]);
+  const upcomingTasks=myEvents.filter(e=>e.date>=today).sort((a,b)=>a.date===b.date?a.startHour-b.startHour:a.date.localeCompare(b.date)).slice(0,5);
+  const unsubmitted=content.filter(c=>{const mine=user.role!=="executive"||c.execId===user.id;return mine&&c.status==="draft";}).slice(0,5);
   return(
     <div>
       {/* Dashboard Banner — wave artwork */}
       <div className="dashboard-mural">
         <WavesSVG height={160} opacity={0.22} phase={0} />
-        <div className="mural-greeting">Good day,<br /><em>{user.name.split(" ")[0]}.</em></div>
+        <div className="mural-greeting">Good day,<br /><em>{(user.displayName||user.name).split(" ")[0]}.</em></div>
         <div className="mural-sub">{todayStr()}</div>
         <div className="mural-stats">
           <div className="mural-stat"><div className="mural-stat-val">{clients.filter(c=>c.status==="active").length}</div><div className="mural-stat-lbl">Clients</div></div>
@@ -1133,6 +1135,40 @@ const INDIAN_FESTIVALS = {
   "2026-11-08":{ name:"Diwali", type:"major", emoji:"🪔", tip:"Biggest festival — gifting, fashion, home, gold" },
   "2026-12-25":{ name:"Christmas", type:"major", emoji:"🎄", tip:"Gifting, joy, year-end — all brands" },
   "2026-12-31":{ name:"New Year's Eve", type:"major", emoji:"🎆", tip:"Year in review, resolutions — all brands" },
+
+  // ── Special Days & International Observances ──
+  "2025-01-01":{ name:"New Year", type:"major", emoji:"🎊", tip:"Fresh start content — new year resolutions, brand refresh" },
+  "2025-02-04":{ name:"World Cancer Day", type:"national", emoji:"🎗️", tip:"Awareness — CSR, health brands, survivor stories" },
+  "2025-03-08":{ name:"International Women's Day", type:"major", emoji:"👩", tip:"Celebrate women — powerful for all brands, especially fashion & beauty" },
+  "2025-03-22":{ name:"World Water Day", type:"national", emoji:"💧", tip:"Sustainability — eco brands, CSR initiatives" },
+  "2025-04-07":{ name:"World Health Day", type:"national", emoji:"🏥", tip:"Health & wellness brands — tips, awareness campaigns" },
+  "2025-04-22":{ name:"Earth Day", type:"national", emoji:"🌍", tip:"Go green — eco packaging, sustainability, CSR content" },
+  "2025-05-01":{ name:"Labour Day", type:"national", emoji:"👷", tip:"Appreciate your team — behind the scenes, team culture posts" },
+  "2025-05-04":{ name:"Star Wars Day", type:"major", emoji:"⚔️", tip:"Pop culture fun — tech & gaming brands, casual engagement" },
+  "2025-05-25":{ name:"Africa Day", type:"national", emoji:"🌍", tip:"Global awareness — international brands & CSR" },
+  "2025-06-01":{ name:"World Milk Day", type:"major", emoji:"🥛", tip:"F&B brands — dairy, nutrition, recipe content" },
+  "2025-06-05":{ name:"World Environment Day", type:"major", emoji:"🌿", tip:"Sustainability — eco brands, CSR, green pledges" },
+  "2025-06-21":{ name:"International Yoga Day", type:"major", emoji:"🧘", tip:"Wellness & lifestyle — mindfulness, fitness brands" },
+  "2025-06-21":{ name:"World Music Day", type:"major", emoji:"🎵", tip:"Brand personality — fun, music-inspired content" },
+  "2025-07-18":{ name:"Nelson Mandela Day", type:"national", emoji:"✊", tip:"Social justice — CSR, equality, community posts" },
+  "2025-08-12":{ name:"International Youth Day", type:"national", emoji:"🌟", tip:"Youth-focused brands — education, fashion, tech" },
+  "2025-09-05":{ name:"Teacher's Day", type:"major", emoji:"📚", tip:"Education brands — tribute to teachers, learning content" },
+  "2025-09-27":{ name:"World Tourism Day", type:"national", emoji:"✈️", tip:"Travel brands — destination highlights, wanderlust content" },
+  "2025-10-01":{ name:"World Coffee Day", type:"major", emoji:"☕", tip:"F&B brands — coffee culture, recipe reels" },
+  "2025-10-04":{ name:"World Animal Day", type:"national", emoji:"🐾", tip:"Pet brands, animal welfare — cute content performs well" },
+  "2025-10-10":{ name:"World Mental Health Day", type:"major", emoji:"💚", tip:"Wellness, empathy content — mental health awareness" },
+  "2025-10-31":{ name:"Halloween", type:"major", emoji:"🎃", tip:"Fun seasonal content — costumes, spooky theme, engagement boosters" },
+  "2025-11-11":{ name:"Singles Day (11.11)", type:"major", emoji:"1️⃣", tip:"E-commerce mega sale day — discounts, flash deals" },
+  "2025-11-19":{ name:"International Men's Day", type:"major", emoji:"👨", tip:"Celebrate men — grooming, fashion, lifestyle brands" },
+  "2025-12-01":{ name:"World AIDS Day", type:"national", emoji:"🎗️", tip:"Awareness — health, CSR, red ribbon campaign" },
+  "2025-12-25":{ name:"Christmas", type:"major", emoji:"🎄", tip:"Gifting, joy, year-end — all brands, warm palette" },
+  "2026-01-01":{ name:"New Year", type:"major", emoji:"🎊", tip:"Fresh start — new collections, brand refresh" },
+  "2026-03-08":{ name:"International Women's Day", type:"major", emoji:"👩", tip:"Celebrate women — powerful for all brands" },
+  "2026-04-22":{ name:"Earth Day", type:"national", emoji:"🌍", tip:"Go green content — eco brands, CSR" },
+  "2026-06-21":{ name:"International Yoga Day", type:"major", emoji:"🧘", tip:"Wellness & lifestyle content" },
+  "2026-09-05":{ name:"Teacher's Day", type:"major", emoji:"📚", tip:"Education brands — tribute posts" },
+  "2026-10-31":{ name:"Halloween", type:"major", emoji:"🎃", tip:"Fun seasonal — spooky theme, engagement" },
+  "2026-12-25":{ name:"Christmas", type:"major", emoji:"🎄", tip:"Gifting & joy — all brands" },
 };
 
 function getFestivalsForMonth(year, month) {
@@ -1166,6 +1202,7 @@ function ContentCalendar({ user, clients, calendar, setCalendar, users }) {
   const [editCal, setEditCal] = useState(null);
   const [selFestival, setSelFestival] = useState(null);
   const [form, setForm] = useState({ clientId:"", posts:[""] });
+  const [filterClient, setFilterClient] = useState("all"); // E1: client filter
 
   const { year, month } = calView;
   const firstDow = new Date(year, month, 1).getDay();
@@ -1183,6 +1220,7 @@ function ContentCalendar({ user, clients, calendar, setCalendar, users }) {
   function postsOnDay(dayStr) {
     return calendar.filter(c => {
       if (!c.dates) return false;
+      if (filterClient !== "all" && String(c.clientId) !== filterClient) return false;
       return c.dates.includes(dayStr);
     });
   }
@@ -1237,7 +1275,13 @@ function ContentCalendar({ user, clients, calendar, setCalendar, users }) {
           <h1 className="section-title">Content Calendar</h1>
           <p className="section-sub">Plan content around Indian festivals & occasions</p>
         </div>
-        <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ New Plan</button>
+        <div className="flex items-center gap-12">
+          <select className="form-input form-select" style={{width:180,height:34,fontSize:12}} value={filterClient} onChange={e=>setFilterClient(e.target.value)}>
+            <option value="all">All Clients</option>
+            {clients.filter(c=>c.status==="active").map(c=><option key={c.id} value={String(c.id)}>{c.name}</option>)}
+          </select>
+          <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ New Plan</button>
+        </div>
       </div>
 
       <div className="cc-wrap">
@@ -1549,7 +1593,7 @@ function Content({ user, clients, content, setContent, users }) {
 function ContentModal({ user, clients, initial, onSave, onClose }) {
   const isApprover=user.role==="admin"||user.role==="superadmin";
   const isExecEdit=user.role==="executive"&&(!initial||initial.status==="draft");
-  const [form,setForm]=useState({clientId:initial?.clientId||"",title:initial?.title||"",scheduledDate:initial?.scheduledDate||"",scheduledTime:initial?.scheduledTime||"10:00",execCaption:initial?.execCaption||"",adminCaption:initial?.adminCaption||"",adminComment:initial?.adminComment||"",status:initial?.status||"draft",mediaType:initial?.mediaType||null,mediaName:initial?.mediaName||null,mediaDataUrl:initial?.mediaDataUrl||null});
+  const [form,setForm]=useState({clientId:initial?.clientId||"",title:initial?.title||"",scheduledDate:initial?.scheduledDate||"",scheduledTime:initial?.scheduledTime||"10:00",execCaption:initial?.execCaption||"",adminCaption:initial?.adminCaption||"",adminComment:initial?.adminComment||"",status:initial?.status||"draft",clientStatus:initial?.clientStatus||"not_submitted",mediaType:initial?.mediaType||null,mediaName:initial?.mediaName||null,mediaDataUrl:initial?.mediaDataUrl||null});
   const [gen,setGen]=useState(false);const [desc,setDesc]=useState("");const [lb,setLb]=useState(false);const fileRef=useRef();
   const client=clients.find(c=>c.id===parseInt(form.clientId));
   async function genCaption(){if(!desc.trim()){alert("Describe the media first.");return;}setGen(true);const cap=await generateCaption(desc,client?.name||"brand",client?.services?.[0]||"social media");setForm(p=>({...p,execCaption:cap}));setGen(false);}
@@ -1575,11 +1619,26 @@ function ContentModal({ user, clients, initial, onSave, onClose }) {
       {!isApprover&&(isExecEdit?<textarea className="form-input form-textarea" value={form.execCaption} onChange={e=>setForm(p=>({...p,execCaption:e.target.value}))} />:<div style={{padding:"8px 11px",background:"var(--cream-dark)",borderRadius:8,fontSize:12.5,lineHeight:1.6,color:"var(--ink)"}}>{form.execCaption||"—"}</div>)}
       {isApprover&&(<><div style={{marginBottom:9,padding:"8px 11px",background:"var(--cream-dark)",borderRadius:8}}><p className="form-label" style={{marginBottom:3}}>Executive's Caption</p><p style={{fontSize:12.5,lineHeight:1.6,color:"var(--ink)"}}>{form.execCaption||"—"}</p></div><label className="form-label">Revised Caption</label><textarea className="form-input form-textarea" value={form.adminCaption} onChange={e=>setForm(p=>({...p,adminCaption:e.target.value}))} /><label className="form-label mt-8">Comment</label><textarea className="form-input form-textarea" value={form.adminComment} onChange={e=>setForm(p=>({...p,adminComment:e.target.value}))} style={{minHeight:52}} /></>)}
     </div>
+    {/* Client Status Tag — exec, admin, superadmin can change */}
+    <div className="form-group" style={{marginBottom:12}}>
+      <label className="form-label">Client Status</label>
+      <div className="flex gap-6" style={{flexWrap:"wrap",marginTop:6}}>
+        {[["not_submitted","Not Submitted","#6B7280"],["submitted_to_client","Sent to Client","#2E5F8A"],["approved_by_client","✓ Client Approved","#4A7C59"],["revision_requested","Revision Requested","#9B3A3A"]].map(([s,label,col])=>(
+          <span key={s} onClick={()=>setForm(p=>({...p,clientStatus:s}))} style={{
+            cursor:"pointer",padding:"5px 11px",borderRadius:20,fontSize:10.5,fontWeight:600,
+            background:(form.clientStatus||"not_submitted")===s?col:"transparent",
+            color:(form.clientStatus||"not_submitted")===s?"white":"var(--ink-muted)",
+            border:`1px solid ${(form.clientStatus||"not_submitted")===s?col:"var(--border)"}`,
+            transition:"all 0.15s"
+          }}>{label}</span>
+        ))}
+      </div>
+    </div>
     <div className="flex gap-8">
-      {isExecEdit&&<><button className="btn btn-ghost" onClick={()=>onSave({...form,status:"draft"})}>Draft</button><button className="btn btn-primary" onClick={()=>onSave({...form,status:"pending_admin"})}>Submit</button></>}
-      {user.role==="admin"&&initial?.status==="pending_admin"&&<><button className="btn btn-success" onClick={()=>onSave({...form,status:"pending_superadmin"})}>✓ → SA</button><button className="btn btn-danger" onClick={()=>onSave({...form,status:"rejected"})}>✕</button></>}
-      {user.role==="superadmin"&&initial?.status==="pending_superadmin"&&<><button className="btn btn-success" onClick={()=>onSave({...form,status:"approved_client"})}>✓ → Client</button><button className="btn btn-danger" onClick={()=>onSave({...form,status:"rejected"})}>✕</button></>}
-      {user.role==="superadmin"&&initial?.status==="approved_client"&&<button className="btn btn-accent" onClick={()=>onSave({...form,status:"posted",postedAt:nowStr()})}>Mark Posted</button>}
+      {isExecEdit&&<><button className="btn btn-ghost" onClick={()=>onSave({...form,status:"draft"})}>Save Draft</button><button className="btn btn-primary" onClick={()=>onSave({...form,status:"pending_admin"})}>Submit for Approval</button></>}
+      {user.role==="admin"&&initial?.status==="pending_admin"&&<><button className="btn btn-success" onClick={()=>onSave({...form,status:"pending_superadmin"})}>✓ Forward to SA</button><button className="btn btn-danger" onClick={()=>onSave({...form,status:"rejected"})}>✕ Reject</button></>}
+      {user.role==="superadmin"&&initial?.status==="pending_superadmin"&&<><button className="btn btn-success" onClick={()=>onSave({...form,status:"approved_client"})}>✓ Final Approve</button><button className="btn btn-danger" onClick={()=>onSave({...form,status:"rejected"})}>✕ Reject</button></>}
+      {user.role==="superadmin"&&initial?.status==="approved_client"&&<button className="btn btn-accent" onClick={()=>onSave({...form,status:"posted",postedAt:nowStr()})}>Mark as Posted</button>}
       <button className="btn btn-ghost" onClick={onClose}>Close</button>
     </div>
   </Modal>);
@@ -1606,32 +1665,117 @@ function Approvals({ user, clients, content, setContent, users }) {
 
 // ─── PUNCH ────────────────────────────────────────────────────────────────────
 function PunchPage({ user, attendance, setAttendance }) {
-  const [clock,setClock]=useState(nowStr());const [punchedIn,setPunchedIn]=useState(false);const [loginTime,setLoginTime]=useState(null);
+  const [clock,setClock]=useState(nowStr());
+  const [punchedIn,setPunchedIn]=useState(false);
+  const [loginTime,setLoginTime]=useState(null);
+  const [showCam,setShowCam]=useState(false);
+  const [pendingAction,setPendingAction]=useState(null); // "in"|"out"
+  const [selfieIn,setSelfieIn]=useState(null);
+  const [selfieOut,setSelfieOut]=useState(null);
+  const videoRef=useRef(); const canvasRef=useRef();
+
   useEffect(()=>{
     const iv=setInterval(()=>setClock(nowStr()),1000);
     const r=attendance.find(a=>a.userId===user.id&&a.date===todayISO());
-    if(r){setPunchedIn(!r.logout);setLoginTime(r.login);}
+    if(r){
+      setPunchedIn(!r.logout);
+      setLoginTime(r.login);
+      if(r.selfieIn) setSelfieIn(r.selfieIn);
+      if(r.selfieOut) setSelfieOut(r.selfieOut);
+    }
     return()=>clearInterval(iv);
   },[attendance,user.id]);
-  function punchIn(){const t=nowStr();setAttendance(prev=>[...prev,{userId:user.id,date:todayISO(),login:t,logout:null}]);setPunchedIn(true);setLoginTime(t);}
-  function punchOut(){const t=nowStr();setAttendance(prev=>prev.map(a=>a.userId===user.id&&a.date===todayISO()&&!a.logout?{...a,logout:t}:a));setPunchedIn(false);}
+
+  async function startCamera(action){
+    setPendingAction(action);
+    setShowCam(true);
+    try{
+      const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"user"},audio:false});
+      if(videoRef.current){videoRef.current.srcObject=stream;videoRef.current.play();}
+    }catch(e){alert("Camera access denied. Please allow camera in browser settings.");setShowCam(false);}
+  }
+
+  function takeSelfie(){
+    const v=videoRef.current; const c=canvasRef.current;
+    if(!v||!c) return;
+    c.width=v.videoWidth||320; c.height=v.videoHeight||240;
+    c.getContext("2d").drawImage(v,0,0);
+    const img=c.toDataURL("image/jpeg",0.7);
+    // stop stream
+    v.srcObject?.getTracks().forEach(t=>t.stop());
+    setShowCam(false);
+    const t=nowStr();
+    if(pendingAction==="in"){
+      setSelfieIn(img);
+      setAttendance(prev=>[...prev,{userId:user.id,date:todayISO(),login:t,logout:null,selfieIn:img,selfieOut:null}]);
+      setPunchedIn(true); setLoginTime(t);
+    } else {
+      setSelfieOut(img);
+      setAttendance(prev=>prev.map(a=>a.userId===user.id&&a.date===todayISO()&&!a.logout?{...a,logout:t,selfieOut:img}:a));
+      setPunchedIn(false);
+    }
+    setPendingAction(null);
+  }
+
+  function cancelCam(){
+    videoRef.current?.srcObject?.getTracks().forEach(t=>t.stop());
+    setShowCam(false); setPendingAction(null);
+  }
+
   const myRec=attendance.filter(a=>a.userId===user.id).slice(-7).reverse();
   const todayRec=attendance.find(a=>a.userId===user.id&&a.date===todayISO());
+
   return(<div>
     <div className="section-header"><h1 className="section-title">Attendance</h1></div>
+
+    {/* Camera modal */}
+    {showCam&&(
+      <div className="modal-overlay" onClick={cancelCam}>
+        <div className="modal" style={{maxWidth:380,textAlign:"center"}} onClick={e=>e.stopPropagation()}>
+          <h3 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:20,marginBottom:12,color:"var(--ink)"}}>
+            {pendingAction==="in"?"Punch In Selfie":"Punch Out Selfie"}
+          </h3>
+          <video ref={videoRef} style={{width:"100%",borderRadius:10,background:"#000",transform:"scaleX(-1)"}} autoPlay playsInline muted />
+          <canvas ref={canvasRef} style={{display:"none"}} />
+          <div className="flex gap-12 mt-16" style={{justifyContent:"center"}}>
+            <button className="btn btn-accent" style={{padding:"10px 28px"}} onClick={takeSelfie}>📸 Capture & {pendingAction==="in"?"Punch In":"Punch Out"}</button>
+            <button className="btn btn-ghost" onClick={cancelCam}>Cancel</button>
+          </div>
+        </div>
+      </div>
+    )}
+
     <div className="grid-2">
-      <div><div className="punch-display">
-        <div className="punch-date">{todayStr()}</div><div className="punch-time">{clock}</div>
-        <div style={{fontSize:12,color:"rgba(255,255,255,0.4)",marginBottom:20}}>{punchedIn?`✓ In at ${loginTime}`:"Not logged in"}</div>
-        {!punchedIn&&!todayRec?<button className="btn btn-accent" style={{width:"100%",justifyContent:"center",padding:"11px"}} onClick={punchIn}>⏱ Punch In</button>
-          :punchedIn?<button className="btn btn-danger" style={{width:"100%",justifyContent:"center",padding:"11px"}} onClick={punchOut}>⏹ Punch Out</button>
-          :<div style={{background:"rgba(62,125,82,0.2)",borderRadius:9,padding:"10px",fontSize:12.5,color:"#90D4A5"}}>✓ Done — {todayRec.login} → {todayRec.logout}</div>}
-      </div></div>
+      <div>
+        <div className="punch-display">
+          <div className="punch-date">{todayStr()}</div>
+          <div className="punch-time">{clock}</div>
+          <div style={{fontSize:12,color:"rgba(255,255,255,0.4)",marginBottom:20}}>{punchedIn?`✓ In at ${loginTime}`:"Not logged in"}</div>
+          {!punchedIn&&!todayRec&&<button className="btn btn-accent" style={{width:"100%",justifyContent:"center",padding:"11px"}} onClick={()=>startCamera("in")}>📸 Take Selfie & Punch In</button>}
+          {punchedIn&&<button className="btn btn-danger" style={{width:"100%",justifyContent:"center",padding:"11px"}} onClick={()=>startCamera("out")}>📸 Take Selfie & Punch Out</button>}
+          {todayRec&&!punchedIn&&<div style={{background:"rgba(62,125,82,0.2)",borderRadius:9,padding:"10px",fontSize:12.5,color:"#90D4A5"}}>✓ Done — {todayRec.login} → {todayRec.logout}</div>}
+        </div>
+        {/* Today's selfies */}
+        {(selfieIn||selfieOut)&&(
+          <div className="card" style={{marginTop:12}}>
+            <p style={{fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:"var(--ink-muted)",marginBottom:10}}>Today's Selfies</p>
+            <div className="flex gap-12">
+              {selfieIn&&<div style={{textAlign:"center"}}><img src={selfieIn} style={{width:90,height:68,borderRadius:8,objectFit:"cover",transform:"scaleX(-1)"}} alt="in" /><div style={{fontSize:9,color:"var(--ink-muted)",marginTop:3}}>Punch In</div></div>}
+              {selfieOut&&<div style={{textAlign:"center"}}><img src={selfieOut} style={{width:90,height:68,borderRadius:8,objectFit:"cover",transform:"scaleX(-1)"}} alt="out" /><div style={{fontSize:9,color:"var(--ink-muted)",marginTop:3}}>Punch Out</div></div>}
+            </div>
+          </div>
+        )}
+      </div>
       <div className="card">
         <h3 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:15,fontWeight:600,marginBottom:12,color:"var(--ink)"}}>Recent Attendance</h3>
         {myRec.length===0?<p className="text-muted text-sm">No records.</p>:(
-          <table className="table"><thead><tr><th>Date</th><th>Login</th><th>Logout</th></tr></thead>
-          <tbody>{myRec.map((r,i)=><tr key={i}><td>{r.date}</td><td style={{color:"var(--success)",fontWeight:500}}>{r.login}</td><td style={{color:r.logout?"var(--danger)":"var(--ink-muted)"}}>{r.logout||"—"}</td></tr>)}</tbody></table>
+          <table className="table"><thead><tr><th>Date</th><th>Login</th><th>Logout</th><th>Photo</th></tr></thead>
+          <tbody>{myRec.map((r,i)=><tr key={i}>
+            <td>{r.date}</td>
+            <td style={{color:"var(--success)",fontWeight:500}}>{r.login}</td>
+            <td style={{color:r.logout?"var(--danger)":"var(--ink-muted)"}}>{r.logout||"—"}</td>
+            <td>{r.selfieIn&&<img src={r.selfieIn} style={{width:28,height:22,borderRadius:4,objectFit:"cover",transform:"scaleX(-1)"}} alt="" />}</td>
+          </tr>)}</tbody></table>
         )}
       </div>
     </div>
@@ -1642,7 +1786,7 @@ function PunchPage({ user, attendance, setAttendance }) {
 function HR({ user, leaves, setLeaves, attendance, users }) {
   const [showModal,setShowModal]=useState(false);const [form,setForm]=useState({from:"",to:"",reason:""});
   const [tab,setTab]=useState("calendar");const [leaveTab,setLeaveTab]=useState("pending");
-  const [calM,setCalM]=useState({year:2024,month:3});const [selDay,setSelDay]=useState(null);
+  const [calM,setCalM]=useState({year:new Date().getFullYear(),month:new Date().getMonth()});const [selDay,setSelDay]=useState(null);
   const isSA=user.role==="superadmin";
   const myLeaves=isSA?leaves:leaves.filter(l=>l.userId===user.id);
   const filteredLeaves=leaveTab==="all"?myLeaves:myLeaves.filter(l=>l.status===leaveTab);
@@ -1757,7 +1901,13 @@ function Assessment({ attendance, leaves, content, users }) {
   }
   function score(text){const m=text.match(/(\d+(?:\.\d+)?)\s*\/\s*10/);return m?m[1]:"?";}
   return(<div>
-    <div className="section-header"><div><h1 className="section-title">AI Employee Assessment</h1></div><span className="ai-badge" style={{fontSize:10,padding:"4px 10px"}}>✦ Claude</span></div>
+    <div className="section-header">
+      <div>
+        <h1 className="section-title">AI Employee Assessment</h1>
+        <p className="section-sub" style={{fontSize:11,color:"var(--ink-muted)"}}>Requires Anthropic API key in your Vercel environment as VITE_ANTHROPIC_API_KEY</p>
+      </div>
+      <span className="ai-badge" style={{fontSize:10,padding:"4px 10px"}}>✦ Claude</span>
+    </div>
     <div style={{display:"grid",gridTemplateColumns:"280px 1fr",gap:16}}>
       <div>
         {employees.map(emp=>{const has=!!assessments[emp.id];const isLoad=loading[emp.id];const isSel=selected===emp.id;return(
@@ -1780,41 +1930,23 @@ function Assessment({ attendance, leaves, content, users }) {
 }
 
 // ─── PLANNER ──────────────────────────────────────────────────────────────────
-function PlannerCalendar({ user }) {
-  const [events,setEvents]=useState(initialPlannerEvents[user.id]||[]);
-
-  // Load from DB on mount
-  useEffect(()=>{
-    if(!dbReady()) return;
-    dbGetPlannerEvents(user.id).then(evs=>{ if(evs) setEvents(evs); });
-  },[user.id]);
+function PlannerCalendar({ user, plannerEvents={}, setPlannerEvents }) {
+  const events = plannerEvents[user.id]||[];
+  function setEvents(updater){
+    const next=typeof updater==="function"?updater(events):updater;
+    setPlannerEvents(p=>({...p,[user.id]:next}));
+  }
   const [selDate,setSelDate]=useState(todayISO());
   const [cal,setCal]=useState(()=>{const d=new Date();return{year:d.getFullYear(),month:d.getMonth()};});
   const [showModal,setShowModal]=useState(false);const [editEv,setEditEv]=useState(null);
-  const [form,setForm]=useState({title:"",startHour:9,endHour:10,color:PLANNER_COLORS[0]});
+  const [form,setForm]=useState({title:"",startHour:9,startMin:0,endHour:10,endMin:0,color:PLANNER_COLORS[0]});
   const firstDay=new Date(cal.year,cal.month,1).getDay();const daysInM=new Date(cal.year,cal.month+1,0).getDate();
   const ds=day=>`${cal.year}-${String(cal.month+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
   const dayEvents=events.filter(e=>e.date===selDate);
-  function openAdd(h){setEditEv(null);setForm({title:"",startHour:h,endHour:Math.min(h+1,22),color:PLANNER_COLORS[0]});setShowModal(true);}
-  function openEdit(ev){setEditEv(ev);setForm({title:ev.title,startHour:ev.startHour,endHour:ev.endHour,color:ev.color});setShowModal(true);}
-  async function saveEv(){
-    if(!form.title.trim()) return;
-    if(editEv){
-      const updated = {...editEv,...form,date:selDate};
-      setEvents(prev=>prev.map(e=>e.id===editEv.id?updated:e));
-      if(dbReady()) await dbUpsertPlannerEvent({...updated,userId:user.id});
-    } else {
-      const newEv = {id:Date.now(),...form,date:selDate,userId:user.id};
-      if(dbReady()){ const saved=await dbUpsertPlannerEvent(newEv); if(saved) { setEvents(prev=>[...prev,saved]); setShowModal(false); return; } }
-      setEvents(prev=>[...prev,newEv]);
-    }
-    setShowModal(false);
-  }
-  function delEv(id){
-    setEvents(prev=>prev.filter(e=>e.id!==id));
-    if(dbReady()) dbDeletePlannerEvent(id);
-    setShowModal(false);
-  }
+  function openAdd(h,m=0){setEditEv(null);setForm({title:"",startHour:h,startMin:m,endHour:Math.min(h+1,22),endMin:0,color:PLANNER_COLORS[0]});setShowModal(true);}
+  function openEdit(ev){setEditEv(ev);setForm({title:ev.title,startHour:ev.startHour,startMin:ev.startMin||0,endHour:ev.endHour,endMin:ev.endMin||0,color:ev.color});setShowModal(true);}
+  function saveEv(){if(!form.title.trim())return;if(editEv)setEvents(prev=>prev.map(e=>e.id===editEv.id?{...e,...form,date:selDate}:e));else setEvents(prev=>[...prev,{id:Date.now(),...form,date:selDate}]);setShowModal(false);}
+  function delEv(id){setEvents(prev=>prev.filter(e=>e.id!==id));setShowModal(false);}
   const selDisplay=new Date(selDate+"T12:00").toLocaleDateString("en-IN",{weekday:"long",day:"numeric",month:"long"});
   return(<div>
     <div className="section-header"><div><h1 className="section-title">My Planner</h1></div><button className="btn btn-primary" onClick={()=>openAdd(9)}>+ Add Task</button></div>
@@ -1858,8 +1990,28 @@ function PlannerCalendar({ user }) {
     {showModal&&(<Modal title={editEv?"Edit Task":"Add Task Block"} onClose={()=>setShowModal(false)}>
       <div className="form-group"><label className="form-label">Title</label><input className="form-input" value={form.title} onChange={e=>setForm(p=>({...p,title:e.target.value}))} autoFocus /></div>
       <div className="grid-2">
-        <div className="form-group"><label className="form-label">Start</label><select className="form-input form-select" value={form.startHour} onChange={e=>setForm(p=>({...p,startHour:parseInt(e.target.value)}))}>{ HOURS.map(h=><option key={h} value={h}>{h<12?`${h}:00 AM`:h===12?"12:00 PM":`${h-12}:00 PM`}</option>)}</select></div>
-        <div className="form-group"><label className="form-label">End</label><select className="form-input form-select" value={form.endHour} onChange={e=>setForm(p=>({...p,endHour:parseInt(e.target.value)}))}>{ HOURS.filter(h=>h>form.startHour).map(h=><option key={h} value={h}>{h<12?`${h}:00 AM`:h===12?"12:00 PM":`${h-12}:00 PM`}</option>)}</select></div>
+        <div className="form-group">
+          <label className="form-label">Start Time</label>
+          <div className="flex gap-6">
+            <select className="form-input form-select" style={{flex:1}} value={form.startHour} onChange={e=>setForm(p=>({...p,startHour:parseInt(e.target.value)}))}>
+              {HOURS.map(h=><option key={h} value={h}>{h<12?`${h} AM`:h===12?"12 PM":`${h-12} PM`}</option>)}
+            </select>
+            <select className="form-input form-select" style={{width:72}} value={form.startMin||0} onChange={e=>setForm(p=>({...p,startMin:parseInt(e.target.value)}))}>
+              {[0,5,10,15,20,25,30,35,40,45,50,55].map(m=><option key={m} value={m}>{String(m).padStart(2,"0")}</option>)}
+            </select>
+          </div>
+        </div>
+        <div className="form-group">
+          <label className="form-label">End Time</label>
+          <div className="flex gap-6">
+            <select className="form-input form-select" style={{flex:1}} value={form.endHour} onChange={e=>setForm(p=>({...p,endHour:parseInt(e.target.value)}))}>
+              {HOURS.filter(h=>h>form.startHour||(h===form.startHour&&(form.endMin||0)>(form.startMin||0))).map(h=><option key={h} value={h}>{h<12?`${h} AM`:h===12?"12 PM":`${h-12} PM`}</option>)}
+            </select>
+            <select className="form-input form-select" style={{width:72}} value={form.endMin||0} onChange={e=>setForm(p=>({...p,endMin:parseInt(e.target.value)}))}>
+              {[0,5,10,15,20,25,30,35,40,45,50,55].map(m=><option key={m} value={m}>{String(m).padStart(2,"0")}</option>)}
+            </select>
+          </div>
+        </div>
       </div>
       <div className="form-group"><label className="form-label">Color</label><div className="flex gap-8 mt-4">{PLANNER_COLORS.map(c=><div key={c} onClick={()=>setForm(p=>({...p,color:c}))} style={{width:24,height:24,borderRadius:6,background:c,cursor:"pointer",border:form.color===c?"3px solid var(--ink)":"3px solid transparent"}} />)}</div></div>
       <div className="flex gap-12 mt-16"><button className="btn btn-primary" onClick={saveEv}>Save</button>{editEv&&<button className="btn btn-danger" onClick={()=>delEv(editEv.id)}>Delete</button>}<button className="btn btn-ghost" onClick={()=>setShowModal(false)}>Cancel</button></div>
@@ -2005,12 +2157,12 @@ function ChatPage({ user, users, messages, setMessages, onlineIds }) {
   const visibleMsgs=thread==="all"?messages.filter(m=>m.toId==="all"):messages.filter(m=>(m.fromId===user.id&&m.toId===thread)||(m.fromId===thread&&m.toId===user.id));
   useEffect(()=>{ msgEndRef.current?.scrollIntoView({behavior:"smooth"}); },[messages,thread]);
   function send(){if(!input.trim()||!thread)return;setMessages(p=>[...p,{id:Date.now(),fromId:user.id,toId:thread,text:input.trim(),time:nowStr(),date:todayISO()}]);setInput("");}
-  function startCall(type,participants){setCall({type,participants:[users.find(u=>u.id===user.id),...participants]});}
+  function startCall(type,participants){setCall({type,participants:[users.find(u=>u.id===user.id),...participants.filter(Boolean)]});}
   const others=users.filter(u=>u.id!==user.id);
   const getUser=id=>users.find(u=>u.id===id);
 
   return(<div style={{display:"grid",gridTemplateColumns:"280px 1fr",gap:0,height:"calc(100vh - 112px)",margin:"-24px"}}>
-    {call&&<VideoCallModal participants={call.participants} onEnd={()=>setCall(null)} />}
+    {call&&<VideoCallModal participants={call.participants} callType={call.type} onEnd={()=>setCall(null)} />}
     {/* Contacts sidebar */}
     <div style={{background:"var(--surface)",borderRight:"1px solid var(--border)",display:"flex",flexDirection:"column",height:"100%"}}>
       <div style={{padding:"16px",borderBottom:"1px solid var(--border)"}}>
@@ -2035,7 +2187,7 @@ function ChatPage({ user, users, messages, setMessages, onlineIds }) {
             </div>
             <div className="chat-contact-info">
               <div className="chat-contact-name">{u.displayName||u.username}</div>
-              <div className="chat-contact-last">{isOnline?"● Active now":"○ Away"}</div>
+              <div className="chat-contact-last">{isOnline?"● Online":"○ Offline"}</div>
               {lastMsg&&<div className="chat-contact-last" style={{marginTop:1}}>{lastMsg.text.slice(0,28)}{lastMsg.text.length>28?"…":""}</div>}
             </div>
             <button className="call-btn call-btn-video" style={{fontSize:9}} onClick={e=>{e.stopPropagation();startCall("video",[u]);}}>📹</button>
@@ -2072,10 +2224,10 @@ function ChatPage({ user, users, messages, setMessages, onlineIds }) {
             )}
             <div style={{flex:1}}>
               <div style={{fontWeight:600,fontSize:14,color:"var(--ink)"}}>{thread==="all"?"All Hands":(getUser(thread)?.displayName||getUser(thread)?.username)}</div>
-              <div style={{fontSize:10,color:"var(--ink-muted)"}}>{thread==="all"?`${onlineIds.length} active`:onlineIds.includes(thread)?"Active now":"Away"}</div>
+              <div style={{fontSize:10,color:"var(--ink-muted)"}}>{thread==="all"?`${onlineIds.length} active`:onlineIds.includes(thread)?"● Online":"○ Offline"}</div>
             </div>
-            <button className="call-btn call-btn-audio" onClick={()=>startCall("audio",thread==="all"?others:[getUser(thread)])}>📞 Call</button>
-            <button className="call-btn call-btn-video" onClick={()=>startCall("video",thread==="all"?others:[getUser(thread)])}>📹 Meet</button>
+            <button className="call-btn call-btn-audio" onClick={()=>startCall("audio",thread==="all"?others:[getUser(thread)])} title="Audio Call">📞</button>
+            <button className="call-btn call-btn-video" onClick={()=>startCall("video",thread==="all"?others:[getUser(thread)])} title="Video Meet">📹</button>
           </div>
           {/* Messages */}
           <div style={{flex:1,overflowY:"auto",padding:"16px 18px",display:"flex",flexDirection:"column",gap:10,background:"var(--cream-dark)"}}>
@@ -2102,220 +2254,143 @@ function ChatPage({ user, users, messages, setMessages, onlineIds }) {
 
 // ─── APP ROOT ─────────────────────────────────────────────────────────────────
 export default function App() {
-  const [users,setUsers]       = useState(INITIAL_USERS);
+  // ── All state persisted to localStorage so nothing resets on refresh ──────
+  const [users,setUsersRaw]   = useState(()=>lsGet("flow_users", INITIAL_USERS));
   const [user,setUser]         = useState(null);
   const [active,setActive]     = useState("dashboard");
-  const [dark,setDark]         = useState(false);
-  const [clients,setClients]   = useState(initialClients);
-  const [content,setContent]   = useState(initialContent);
-  const [calendar,setCalendar] = useState(initialCalendar);
-  const [leaves,setLeaves]     = useState(initialLeaves);
-  const [attendance,setAttendance] = useState(initialAttendance);
-  const [messages,setMessages] = useState(initialMessages);
-  const [onlineIds,setOnlineIds] = useState([1,2,3]);
-  const [phase,setPhase]       = useState(0);
-  const [dbLoaded,setDbLoaded] = useState(false);
-  const [dbStatus,setDbStatus] = useState("idle"); // idle | loading | ready | offline
+  const [dark,setDark]         = useState(()=>lsGet("flow_dark", false));
+  const [clients,setClientsRaw]   = useState(()=>lsGet("flow_clients", initialClients));
+  const [content,setContentRaw]   = useState(()=>lsGet("flow_content", initialContent));
+  const [calendar,setCalendarRaw] = useState(()=>lsGet("flow_calendar", initialCalendar));
+  const [leaves,setLeavesRaw]     = useState(()=>lsGet("flow_leaves", initialLeaves));
+  const [attendance,setAttendanceRaw] = useState(()=>lsGet("flow_attendance", initialAttendance));
+  const [messages,setMessagesRaw] = useState(()=>lsGet("flow_messages", initialMessages));
+  const [plannerEvents,setPlannerEventsRaw] = useState(()=>lsGet("flow_planner", initialPlannerEvents));
+  const [onlineIds,setOnlineIds]  = useState([]);
+  const [phase,setPhase]          = useState(0);
+  const [chatNotif,setChatNotif]  = useState(null); // {text, from} for popup
 
-  // ── Wave animation ────────────────────────────────────────────────────────
+  // ── Persist-aware setters ──────────────────────────────────────────────────
+  function setUsers(u)      { const v=typeof u==="function"?u(users):u;      lsSet("flow_users",v);      setUsersRaw(v); }
+  function setClients(u)    { const v=typeof u==="function"?u(clients):u;    lsSet("flow_clients",v);    setClientsRaw(v); }
+  function setContent(u)    { const v=typeof u==="function"?u(content):u;    lsSet("flow_content",v);    setContentRaw(v); }
+  function setCalendar(u)   { const v=typeof u==="function"?u(calendar):u;   lsSet("flow_calendar",v);   setCalendarRaw(v); }
+  function setLeaves(u)     { const v=typeof u==="function"?u(leaves):u;     lsSet("flow_leaves",v);     setLeavesRaw(v); }
+  function setAttendance(u) { const v=typeof u==="function"?u(attendance):u; lsSet("flow_attendance",v); setAttendanceRaw(v); }
+  function setMessages(u)   {
+    const prev = messages;
+    const v=typeof u==="function"?u(prev):u;
+    if(v.length > prev.length) {
+      const newMsg = v[v.length-1];
+      // broadcast to other tabs
+      try{ if(typeof BroadcastChannel!=="undefined") new BroadcastChannel("flow_messages_sync").postMessage({type:"new_message",msg:newMsg}); }catch{}
+      // show notification if message is from someone else
+      if(user && newMsg.fromId !== user.id) {
+        const sender = users.find(x=>x.id===newMsg.fromId);
+        setChatNotif({text:newMsg.text, from:sender?.displayName||sender?.name||"Someone"});
+        setTimeout(()=>setChatNotif(null), 4000);
+      }
+    }
+    lsSet("flow_messages",v);
+    setMessagesRaw(v);
+  }
+  function setPlannerEvents(u) { const v=typeof u==="function"?u(plannerEvents):u; lsSet("flow_planner",v); setPlannerEventsRaw(v); }
+
+  // ── BroadcastChannel: sync messages across browser tabs ─────────────────────
+  useEffect(()=>{
+    let bc = null;
+    try {
+      bc = new BroadcastChannel("flow_messages_sync");
+      bc.onmessage = (e) => {
+        if(e.data?.type==="new_message") {
+          const msg = e.data.msg;
+          setMessagesRaw(prev=>{
+            if(prev.find(m=>m.id===msg.id)) return prev;
+            const next=[...prev,msg];
+            lsSet("flow_messages",next);
+            return next;
+          });
+          if(user && msg.fromId!==user.id) {
+            const sender=users.find(x=>x.id===msg.fromId);
+            setChatNotif({text:msg.text,from:sender?.displayName||sender?.name||"Someone"});
+            setTimeout(()=>setChatNotif(null),4000);
+          }
+        }
+      };
+    } catch(e){ /* BroadcastChannel not available */ }
+    return ()=>{ try{ bc?.close(); }catch{} };
+  },[user,users]);
+
+  // ── When user logs in, mark them online ───────────────────────────────────
+  function handleLogin(loggedUser) {
+    setUser(loggedUser);
+    setOnlineIds([loggedUser.id]);
+  }
+
+  // ── Wave animation ─────────────────────────────────────────────────────────
   useEffect(()=>{
     const iv=setInterval(()=>setPhase(p=>p+0.006),50);
     return()=>clearInterval(iv);
   },[]);
 
-  // ── Load all data from Supabase on mount ──────────────────────────────────
-  useEffect(()=>{
-    if(!dbReady()){ setDbStatus("offline"); setDbLoaded(true); return; }
-    setDbStatus("loading");
-    async function loadAll(){
-      try {
-        const [u,cl,co,ca,le,at,ms] = await Promise.all([
-          dbGetUsers(), dbGetClients(), dbGetContent(),
-          dbGetCalendar(), dbGetLeaves(), dbGetAttendance(), dbGetMessages(),
-        ]);
-        if(u)  setUsers(u);
-        if(cl) setClients(cl);
-        if(co) setContent(co);
-        if(ca) setCalendar(ca);
-        if(le) setLeaves(le);
-        if(at) setAttendance(at);
-        if(ms) setMessages(ms);
-        setDbStatus("ready");
-      } catch(e){ console.error("DB load error:",e); setDbStatus("offline"); }
-      setDbLoaded(true);
-    }
-    loadAll();
-  },[]);
+  // ── Persist dark mode ──────────────────────────────────────────────────────
+  function handleSetDark(v) { lsSet("flow_dark",v); setDark(v); }
 
-  // ── Realtime chat subscription ────────────────────────────────────────────
-  useEffect(()=>{
-    if(!dbReady()) return;
-    const unsub = subscribeToMessages(msg=>{
-      setMessages(prev=>{
-        if(prev.find(m=>m.id===msg.id)) return prev; // dedupe
-        return [...prev,msg];
-      });
-    });
-    return unsub;
-  },[]);
-
-  // ── DB-aware state setters ────────────────────────────────────────────────
-  // Clients
-  const handleSetClients = useCallback(async (updater)=>{
-    setClients(prev=>{
-      const next = typeof updater==="function" ? updater(prev) : updater;
-      // Upsert changed/new items
-      const prevIds = new Set(prev.map(c=>c.id));
-      next.forEach(c=>{ if(!prevIds.has(c.id)||JSON.stringify(c)!==JSON.stringify(prev.find(p=>p.id===c.id))) dbUpsertClient(c); });
-      return next;
-    });
-  },[]);
-
-  // Content
-  const handleSetContent = useCallback(async (updater)=>{
-    setContent(prev=>{
-      const next = typeof updater==="function" ? updater(prev) : updater;
-      const prevMap = Object.fromEntries(prev.map(c=>[c.id,c]));
-      next.forEach(c=>{ if(!prevMap[c.id]||JSON.stringify(c)!==JSON.stringify(prevMap[c.id])) dbUpsertContent(c); });
-      return next;
-    });
-  },[]);
-
-  // Calendar
-  const handleSetCalendar = useCallback(async (updater)=>{
-    setCalendar(prev=>{
-      const next = typeof updater==="function" ? updater(prev) : updater;
-      const prevMap = Object.fromEntries(prev.map(c=>[c.id,c]));
-      next.forEach(c=>{ if(!prevMap[c.id]||JSON.stringify(c)!==JSON.stringify(prevMap[c.id])) dbUpsertCalendar(c); });
-      return next;
-    });
-  },[]);
-
-  // Leaves
-  const handleSetLeaves = useCallback(async (updater)=>{
-    setLeaves(prev=>{
-      const next = typeof updater==="function" ? updater(prev) : updater;
-      const prevMap = Object.fromEntries(prev.map(l=>[l.id,l]));
-      next.forEach(l=>{ if(!prevMap[l.id]||JSON.stringify(l)!==JSON.stringify(prevMap[l.id])) dbUpsertLeave(l); });
-      return next;
-    });
-  },[]);
-
-  // Attendance
-  const handleSetAttendance = useCallback(async (updater)=>{
-    setAttendance(prev=>{
-      const next = typeof updater==="function" ? updater(prev) : updater;
-      const prevKeys = new Set(prev.map(a=>`${a.userId}_${a.date}`));
-      next.forEach(a=>{ if(!prevKeys.has(`${a.userId}_${a.date}`)) dbUpsertAttendance(a); });
-      return next;
-    });
-  },[]);
-
-  // Messages — insert to DB then let realtime handle state update
-  const handleSetMessages = useCallback((updater)=>{
-    setMessages(prev=>{
-      const next = typeof updater==="function" ? updater(prev) : updater;
-      const newMsg = next.find(m=>!prev.find(p=>p.id===m.id));
-      if(newMsg && dbReady()) dbInsertMessage(newMsg);
-      return next;
-    });
-  },[]);
-
-  // Users
-  const handleSetUsers = useCallback((updater)=>{
-    setUsers(prev=>{
-      const next = typeof updater==="function" ? updater(prev) : updater;
-      const prevMap = Object.fromEntries(prev.map(u=>[u.id,u]));
-      next.forEach(u=>{
-        if(!prevMap[u.id]) dbInsertUser(u);
-        else if(JSON.stringify(u)!==JSON.stringify(prevMap[u.id])) dbUpdateUser(u.id,u);
-      });
-      // Deletions
-      prev.forEach(u=>{ if(!next.find(n=>n.id===u.id)) dbDeleteUser(u.id); });
-      return next;
-    });
-  },[]);
-
-  // Password change — also updates DB
   function handlePasswordChange(newPw){
-    handleSetUsers(p=>p.map(u=>u.id===user.id?{...u,password:newPw}:u));
+    setUsers(p=>p.map(u=>u.id===user.id?{...u,password:newPw}:u));
     setUser(p=>({...p,password:newPw}));
   }
-
-  // setUser wrapper — keeps user session in sync when users list changes
-  const handleSetUser = useCallback((updater)=>{
-    setUser(prev=>{
-      const next = typeof updater==="function" ? updater(prev) : updater;
-      return next;
-    });
-  },[]);
 
   const titles={dashboard:"Dashboard",clients:"Clients",calendar:"Content Calendar",content:"Content",approvals:"Approvals",punch:"Attendance",hr:"HR & Team",assessment:"AI Assessment",logins:"User Logins",notes:"My Planner",chat:"Team Chat",settings:"Settings"};
   const pendingCount=content.filter(c=>(user?.role==="admin"&&c.status==="pending_admin")||(user?.role==="superadmin"&&(c.status==="pending_superadmin"||c.status==="pending_admin"))).length;
 
-  // Loading screen
-  if(!dbLoaded && dbStatus==="loading"){
-    return(
-      <>
-        <style>{getStyles(false)}</style>
-        <div style={{minHeight:"100vh",background:"#080510",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:16}}>
-          <WavesSVG height={window.innerHeight||700} opacity={0.4} phase={phase} />
-          <div style={{position:"relative",zIndex:2,textAlign:"center"}}>
-            <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:38,fontWeight:700,color:"white",letterSpacing:-1}}>Flow <em style={{fontStyle:"italic",color:"#E8608A"}}>by</em> Anecdote</div>
-            <div style={{fontSize:11,letterSpacing:3,textTransform:"uppercase",color:"rgba(255,255,255,0.4)",marginTop:8,marginBottom:32}}>Agency Management Platform</div>
-            <div style={{fontSize:13,color:"rgba(255,255,255,0.5)",animation:"pulse 1.4s ease-in-out infinite"}}>Connecting to database…</div>
-          </div>
-        </div>
-      </>
-    );
-  }
-
-  if(!user) return(
-    <>
-      <style>{getStyles(dark)}</style>
-      {dbStatus==="offline"&&(
-        <div style={{position:"fixed",bottom:16,right:16,background:"#3A1A0A",border:"1px solid #E8553A",borderRadius:8,padding:"8px 14px",fontSize:11,color:"#FFA07A",zIndex:999,display:"flex",alignItems:"center",gap:7}}>
-          ⚠ Running offline — changes won't be saved. Add Supabase keys to go live.
-        </div>
-      )}
-      <LoginPage onLogin={setUser} dark={dark} phase={phase} users={users} />
-    </>
-  );
+  // ── Login screen ───────────────────────────────────────────────────────────
+  if(!user) return <><style>{getStyles(dark)}</style><LoginPage onLogin={handleLogin} dark={dark} phase={phase} users={users} /></>;
 
   return(
     <>
       <style>{getStyles(dark)}</style>
       <WaveAccentBar phase={phase} />
       <AmbientWave dark={dark} phase={phase} />
-      {dbStatus==="offline"&&(
-        <div style={{position:"fixed",bottom:16,right:16,background:"#3A1A0A",border:"1px solid #E8553A",borderRadius:8,padding:"8px 14px",fontSize:11,color:"#FFA07A",zIndex:999,display:"flex",alignItems:"center",gap:7}}>
-          ⚠ Offline mode — add Supabase keys to persist data
+
+      {/* ── Chat notification popup ── */}
+      {chatNotif&&(
+        <div onClick={()=>{setActive("chat");setChatNotif(null);}} style={{
+          position:"fixed",bottom:24,right:24,zIndex:9999,
+          background:"var(--surface)",border:"1px solid var(--accent)",borderRadius:12,
+          padding:"12px 16px",maxWidth:280,cursor:"pointer",
+          boxShadow:"0 8px 32px rgba(0,0,0,0.18)",animation:"slideUp 0.3s ease"
+        }}>
+          <div style={{fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:"var(--accent)",marginBottom:4}}>💬 New Message</div>
+          <div style={{fontWeight:600,fontSize:12,color:"var(--ink)",marginBottom:2}}>{chatNotif.from}</div>
+          <div style={{fontSize:12,color:"var(--ink-muted)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{chatNotif.text}</div>
         </div>
       )}
+
       <div className="app" style={{paddingTop:3,position:"relative",zIndex:1}}>
         <Sidebar user={user} active={active} setActive={setActive} pendingCount={pendingCount} chatUnread={0} />
         <div className="main">
           <div className="topbar">
             <span className="topbar-title serif" style={{fontStyle:active==="dashboard"?"italic":"normal"}}>{titles[active]||active}</span>
             <div className="topbar-right">
-              <button className="icon-btn" title="Toggle Theme" onClick={()=>setDark(p=>!p)}>{dark?"☀":"🌙"}</button>
-              <div className="flex items-center gap-8"><div className="avatar sm">{user.avatar}</div><span style={{fontSize:12,fontWeight:500,color:"var(--ink)"}}>{user.displayName||user.username}</span></div>
-              <button className="btn btn-ghost btn-sm" onClick={()=>setUser(null)}>Sign Out</button>
+              <button className="icon-btn" title="Toggle Theme" onClick={()=>handleSetDark(p=>!p)}>{dark?"☀":"🌙"}</button>
+              <div className="flex items-center gap-8"><div className="avatar sm">{user.avatar}</div><span style={{fontSize:12,fontWeight:500,color:"var(--ink)"}}>{user.displayName||user.name}</span></div>
+              <button className="btn btn-ghost btn-sm" onClick={()=>{setUser(null);setOnlineIds([]);}}>Sign Out</button>
             </div>
           </div>
           <div className="content" style={{paddingRight:0}}>
-            {active==="dashboard"&&<div style={{paddingRight:24}}><Dashboard user={user} clients={clients} content={content} setContent={handleSetContent} attendance={attendance} dark={dark} /></div>}
-            {active==="clients"&&<div style={{paddingRight:24}}><Clients user={user} clients={clients} setClients={handleSetClients} /></div>}
-            {active==="calendar"&&<div style={{paddingRight:24}}><ContentCalendar user={user} clients={clients} calendar={calendar} setCalendar={handleSetCalendar} users={users} /></div>}
-            {active==="content"&&<div style={{paddingRight:24}}><Content user={user} clients={clients} content={content} setContent={handleSetContent} users={users} /></div>}
-            {active==="approvals"&&(user.role==="admin"||user.role==="superadmin")&&<div style={{paddingRight:24}}><Approvals user={user} clients={clients} content={content} setContent={handleSetContent} users={users} /></div>}
-            {active==="punch"&&<div style={{paddingRight:24}}><PunchPage user={user} attendance={attendance} setAttendance={handleSetAttendance} /></div>}
-            {active==="hr"&&<div style={{paddingRight:24}}><HR user={user} leaves={leaves} setLeaves={handleSetLeaves} attendance={attendance} users={users} /></div>}
+            {active==="dashboard"&&<div style={{paddingRight:24}}><Dashboard user={user} clients={clients} content={content} setContent={setContent} attendance={attendance} dark={dark} plannerEvents={plannerEvents} calendar={calendar} /></div>}
+            {active==="clients"&&<div style={{paddingRight:24}}><Clients user={user} clients={clients} setClients={setClients} /></div>}
+            {active==="calendar"&&<div style={{paddingRight:24}}><ContentCalendar user={user} clients={clients} calendar={calendar} setCalendar={setCalendar} users={users} /></div>}
+            {active==="content"&&<div style={{paddingRight:24}}><Content user={user} clients={clients} content={content} setContent={setContent} users={users} /></div>}
+            {active==="approvals"&&(user.role==="admin"||user.role==="superadmin")&&<div style={{paddingRight:24}}><Approvals user={user} clients={clients} content={content} setContent={setContent} users={users} /></div>}
+            {active==="punch"&&<div style={{paddingRight:24}}><PunchPage user={user} attendance={attendance} setAttendance={setAttendance} /></div>}
+            {active==="hr"&&<div style={{paddingRight:24}}><HR user={user} leaves={leaves} setLeaves={setLeaves} attendance={attendance} users={users} /></div>}
             {active==="assessment"&&user.role==="superadmin"&&<div style={{paddingRight:24}}><Assessment attendance={attendance} leaves={leaves} content={content} users={users} /></div>}
-            {active==="notes"&&<div style={{paddingRight:24}}><PlannerCalendar user={user} /></div>}
-            {active==="logins"&&user.role==="superadmin"&&<div style={{paddingRight:24}}><UserLogins users={users} setUsers={handleSetUsers} currentUser={user} setCurrentUser={handleSetUser} /></div>}
-            {active==="chat"&&<ChatPage user={user} users={users} messages={messages} setMessages={handleSetMessages} onlineIds={onlineIds} />}
-            {active==="settings"&&<div style={{paddingRight:24}}><Settings user={user} users={users} setUsers={handleSetUsers} dark={dark} setDark={setDark} onPasswordChange={handlePasswordChange} /></div>}
+            {active==="notes"&&<div style={{paddingRight:24}}><PlannerCalendar user={user} plannerEvents={plannerEvents} setPlannerEvents={setPlannerEvents} /></div>}
+            {active==="logins"&&user.role==="superadmin"&&<div style={{paddingRight:24}}><UserLogins users={users} setUsers={setUsers} currentUser={user} setCurrentUser={setUser} /></div>}
+            {active==="chat"&&<ChatPage user={user} users={users} messages={messages} setMessages={setMessages} onlineIds={onlineIds} />}
+            {active==="settings"&&<div style={{paddingRight:24}}><Settings user={user} users={users} setUsers={setUsers} dark={dark} setDark={handleSetDark} onPasswordChange={handlePasswordChange} /></div>}
           </div>
         </div>
       </div>
