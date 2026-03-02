@@ -1,0 +1,2324 @@
+import { useState, useEffect, useRef, useCallback } from "react";
+import {
+  supabase, dbReady,
+  dbGetUsers, dbUpdateUser, dbInsertUser, dbDeleteUser,
+  dbGetClients, dbUpsertClient,
+  dbGetContent, dbUpsertContent,
+  dbGetCalendar, dbUpsertCalendar,
+  dbGetLeaves, dbUpsertLeave,
+  dbGetAttendance, dbUpsertAttendance,
+  dbGetMessages, dbInsertMessage,
+  dbGetPlannerEvents, dbUpsertPlannerEvent, dbDeletePlannerEvent,
+  subscribeToMessages,
+} from "./supabase.js";
+
+// ─── DATA ────────────────────────────────────────────────────────────────────
+const INITIAL_USERS = [
+  { id:1, name:"Aryan Shah",  role:"superadmin", username:"SuperAdmin",  displayName:"Super Admin",  password:"super123",  avatar:"AS", email:"aryan@agency.com"  },
+  { id:2, name:"Priya Mehta", role:"admin",       username:"Admin",       displayName:"Admin",        password:"admin123",  avatar:"PM", email:"priya@agency.com"  },
+  { id:3, name:"Rahul Verma", role:"executive",   username:"Executive_1", displayName:"Executive 1", password:"exec123",   avatar:"RV", email:"rahul@agency.com"  },
+  { id:4, name:"Sneha Joshi", role:"executive",   username:"Executive_2", displayName:"Executive 2", password:"exec456",   avatar:"SJ", email:"sneha@agency.com"  },
+];
+
+const SERVICES     = ["Social Media Management","Branding","Design","Video Editing","Photography","Web Design"];
+const PLANNER_COLORS = ["#C4954A","#4A7C59","#2E5F8A","#9B3A3A","#6B4E9B","#B8860B"];
+const HOURS        = Array.from({length:14},(_,i)=>i+8);
+const MONTH_NAMES  = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+const todayISO = () => new Date().toISOString().split("T")[0];
+const nowStr   = () => new Date().toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit",hour12:true});
+const todayStr = () => new Date().toLocaleDateString("en-IN",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
+const T = todayISO();
+
+const initialClients = [
+  {id:1,name:"Lumière Cosmetics",contact:"Aisha Kapoor",email:"aisha@lumiere.com",phone:"+91 98765 43210",services:["Social Media Management","Branding"],status:"active",onboarded:true,socialAccess:{instagram:"@lumiere_beauty",facebook:"Lumière Official"},enquiryDate:"2024-01-10",dealDate:"2024-01-20"},
+  {id:2,name:"Verde Architecture",contact:"Rohan Gupta",email:"rohan@verde.in",phone:"+91 87654 32109",services:["Design","Video Editing"],status:"active",onboarded:true,socialAccess:{},enquiryDate:"2024-02-05",dealDate:"2024-02-15"},
+  {id:3,name:"Noor Jewels",contact:"Fatima Shaikh",email:"fatima@noor.com",phone:"+91 76543 21098",services:["Social Media Management"],status:"enquiry",onboarded:false,socialAccess:{},enquiryDate:"2024-03-01",dealDate:null},
+];
+const initialContent = [
+  {id:1,clientId:1,title:"Spring Collection Launch",execCaption:"Spring is here! ✨ #lumiere",adminCaption:"Embrace the bloom. ✨ Our new Spring Collection. #LumièreBeauty",adminComment:"",scheduledDate:T,scheduledTime:"10:00",status:"approved_client",execId:3,mediaType:null,mediaName:null,mediaDataUrl:null,createdAt:"2024-03-28",postedAt:null},
+  {id:2,clientId:1,title:"Product Highlight – Serum",execCaption:"Glow from within. #skincare",adminCaption:"",adminComment:"",scheduledDate:T,scheduledTime:"18:00",status:"pending_admin",execId:3,mediaType:null,mediaName:null,mediaDataUrl:null,createdAt:"2024-04-01",postedAt:null},
+  {id:3,clientId:2,title:"Studio Showcase",execCaption:"Amazing project complete!",adminCaption:"Where architecture meets artistry.",adminComment:"Good comp, tweak caption",scheduledDate:T,scheduledTime:"12:00",status:"approved_client",execId:4,mediaType:null,mediaName:null,mediaDataUrl:null,createdAt:"2024-04-02",postedAt:null},
+];
+const initialCalendar = [
+  {id:1,clientId:1,month:"April 2024",posts:["Spring Collection Launch","Product Highlight","Brand Story","Testimonial Post"],status:"approved",createdBy:3,approvedBy:1},
+];
+const initialLeaves = [
+  {id:1,userId:3,reason:"Family function",from:"2024-04-10",to:"2024-04-11",status:"approved",appliedOn:"2024-04-01"},
+  {id:2,userId:4,reason:"Medical appointment",from:"2024-04-15",to:"2024-04-15",status:"pending",appliedOn:"2024-04-05"},
+  {id:3,userId:2,reason:"Personal work",from:"2024-04-22",to:"2024-04-23",status:"approved",appliedOn:"2024-04-10"},
+];
+const initialAttendance = (() => {
+  const base=[];
+  const workDays=[1,2,3,4,7,8,9,10,14,16,17,18,19,21,24,25,26,28,29,30];
+  workDays.forEach(d=>{
+    const date=`2024-04-${String(d).padStart(2,"0")}`;
+    [2,3,4].forEach(uid=>{
+      const lh=8+Math.floor(Math.random()*2),lm=Math.floor(Math.random()*30);
+      const oh=17+Math.floor(Math.random()*2),om=Math.floor(Math.random()*60);
+      const fmt=(h,m)=>`${String(h%12||12).padStart(2,"0")}:${String(m).padStart(2,"0")} ${h<12?"AM":"PM"}`;
+      base.push({userId:uid,date,login:fmt(lh,lm),logout:fmt(oh,om)});
+    });
+  });
+  return base;
+})();
+const initialPlannerEvents = {
+  1:[{id:1,title:"Client Strategy Review",date:T,startHour:10,endHour:11,color:"#C4954A"}],
+  2:[{id:1,title:"Content Approval Batch",date:T,startHour:14,endHour:15,color:"#2E5F8A"}],
+  3:[{id:1,title:"Lumière Photo Shoot",date:T,startHour:9,endHour:11,color:"#4A7C59"}],
+  4:[{id:1,title:"Reel editing – Verde",date:T,startHour:15,endHour:17,color:"#9B3A3A"}],
+};
+
+// Initial chat messages
+const initialMessages = [
+  {id:1,fromId:1,toId:"all",text:"Good morning team! Sync at 11am today.",time:"09:05 AM",date:T},
+  {id:2,fromId:3,toId:"all",text:"Sure! Lumière shoot brief is ready.",time:"09:12 AM",date:T},
+  {id:3,fromId:2,toId:"all",text:"Content approvals batch going out by noon.",time:"09:20 AM",date:T},
+  {id:4,fromId:4,toId:"all",text:"Verde reel will be done by EOD 🎬",time:"09:45 AM",date:T},
+];
+
+// ─── AI helpers ───────────────────────────────────────────────────────────────
+async function callClaude(prompt, maxTokens=1200) {
+  const res = await fetch("https://api.anthropic.com/v1/messages",{
+    method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:maxTokens,messages:[{role:"user",content:prompt}]})
+  });
+  const d = await res.json();
+  return d.content?.[0]?.text || "";
+}
+async function generateCaption(desc,clientName,service){
+  try{ return await callClaude(`Premium Instagram caption for ${clientName} (${service}). Media: ${desc}. Elegant tone, 3-5 hashtags, under 150 words. Return ONLY caption.`); }
+  catch{ return "Caption generation failed."; }
+}
+async function generateAssessment(emp,attRecs,leaveRecs,contentItems){
+  const present=attRecs.length, total=22;
+  const prompt=`HR performance assessment for ${emp.name} (${emp.role}), April 2024.
+Attendance: ${present}/${total} days present. Leaves: ${leaveRecs.length} (${leaveRecs.filter(l=>l.status==="approved").length} approved).
+Content: ${contentItems.length} items total, ${contentItems.filter(c=>c.status==="posted").length} posted, ${contentItems.filter(c=>c.status==="approved_client").length} approved.
+Write structured report with ## headers: Overall Performance Score (X/10), Attendance & Punctuality, Work Output, Strengths (bullets), Areas for Improvement (bullets), Recommendation. Be concise and data-driven.`;
+  try{ return await callClaude(prompt,1500); }
+  catch{ return "Assessment generation failed."; }
+}
+
+function parseMarkdown(md){
+  const lines=md.split("\n"); const out=[]; let inUl=false;
+  lines.forEach(line=>{
+    if(line.startsWith("## ")){if(inUl){out.push("</ul>");inUl=false;}out.push(`<h2>${line.slice(3)}</h2>`);}
+    else if(line.startsWith("- ")||line.startsWith("* ")){if(!inUl){out.push("<ul>");inUl=true;}out.push(`<li>${line.slice(2)}</li>`);}
+    else{if(inUl){out.push("</ul>");inUl=false;}if(line.trim())out.push(`<p>${line}</p>`);}
+  });
+  if(inUl)out.push("</ul>");
+  return out.join("");
+}
+
+// ─── THEME STYLES ─────────────────────────────────────────────────────────────
+const getStyles = (dark) => `
+  @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400;1,600&family=DM+Sans:wght@300;400;500;600&display=swap');
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+  :root{
+    --cream:${dark?"#1A1A2E":"#F6F1E9"};
+    --cream-dark:${dark?"#16213E":"#EDE6D6"};
+    --ink:${dark?"#E8E0D0":"#141414"};
+    --ink-light:${dark?"#B8B0A0":"#3A3A3A"};
+    --ink-muted:${dark?"#777":"#888"};
+    --accent:#C4954A;--accent-light:#E8C88A;--accent-pale:${dark?"rgba(196,149,74,0.15)":"#F8EDDA"};
+    --white:${dark?"#0F3460":"#FFF"};
+    --border:${dark?"#2A3A5A":"#DDD5C0"};
+    --surface:${dark?"#1E2D4A":"#FFFFFF"};
+    --surface2:${dark?"#243354":"#F6F1E9"};
+    --success:#3E7D52;--warning:#B07D0A;--danger:#943535;--info:#2A5A8A;
+    --sidebar-w:248px;--header-h:62px;
+    --chat-w:320px;
+  }
+  body{font-family:'DM Sans',sans-serif;background:var(--cream);color:var(--ink);}
+  .serif{font-family:'Cormorant Garamond',serif;}
+  ::-webkit-scrollbar{width:4px;}::-webkit-scrollbar-track{background:var(--cream-dark);}::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px;}
+
+  .app{display:flex;min-height:100vh;}
+  .sidebar{width:var(--sidebar-w);background:${dark?"#0D1B2A":"#141414"};display:flex;flex-direction:column;position:fixed;top:0;left:0;bottom:0;z-index:100;overflow-y:auto;}
+  .sidebar-logo{padding:20px 18px 18px;border-bottom:1px solid rgba(255,255,255,0.07);}
+  .logo-wordmark{font-family:'Cormorant Garamond',serif;font-size:22px;font-weight:700;color:var(--accent-light);letter-spacing:-0.5px;line-height:1;}
+  .logo-wordmark em{font-style:italic;color:#fff;}
+  .logo-byline{font-size:9px;letter-spacing:2.5px;color:rgba(255,255,255,0.28);text-transform:uppercase;margin-top:4px;}
+  .sidebar-section{padding:13px 0 5px;}
+  .sidebar-section-label{font-size:9px;letter-spacing:2px;text-transform:uppercase;color:rgba(255,255,255,0.22);padding:0 18px;margin-bottom:4px;}
+  .nav-item{display:flex;align-items:center;gap:9px;padding:9px 18px;cursor:pointer;color:rgba(255,255,255,0.5);font-size:13px;transition:all 0.18s;border-left:2px solid transparent;}
+  .nav-item:hover{color:rgba(255,255,255,0.82);background:rgba(255,255,255,0.04);}
+  .nav-item.active{color:var(--accent-light);border-left-color:var(--accent);background:rgba(196,149,74,0.09);}
+  .nav-icon{font-size:13px;width:15px;text-align:center;}
+  .nav-badge{margin-left:auto;background:var(--accent);color:white;font-size:9px;padding:1px 6px;border-radius:10px;font-weight:700;}
+  .sidebar-footer{margin-top:auto;padding:13px 18px;border-top:1px solid rgba(255,255,255,0.07);}
+  .user-chip{display:flex;align-items:center;gap:8px;}
+  .avatar{width:29px;height:29px;border-radius:50%;background:var(--accent);color:white;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+  .avatar.sm{width:25px;height:25px;font-size:9px;}
+  .avatar.lg{width:40px;height:40px;font-size:14px;}
+  .user-name{font-size:12px;color:rgba(255,255,255,0.78);font-weight:500;}
+  .user-role{font-size:9.5px;color:rgba(255,255,255,0.28);text-transform:capitalize;}
+
+  .main{margin-left:var(--sidebar-w);flex:1;display:flex;flex-direction:column;min-height:100vh;}
+  .topbar{height:var(--header-h);background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 24px;position:sticky;top:0;z-index:50;gap:12px;}
+  .topbar-title{font-family:'Cormorant Garamond',serif;font-size:20px;color:var(--ink);flex:1;font-weight:600;}
+  .topbar-right{display:flex;align-items:center;gap:9px;}
+  .icon-btn{width:30px;height:30px;border:1px solid var(--border);background:var(--surface);border-radius:7px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--ink-light);transition:all 0.18s;}
+  .icon-btn:hover{background:var(--cream-dark);}
+  .content{flex:1;padding:24px;overflow-y:auto;}
+
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:19px;}
+  .stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:13px;}
+  .stat-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;}
+  .stat-label{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink-muted);margin-bottom:6px;}
+  .stat-value{font-family:'Cormorant Garamond',serif;font-size:34px;color:var(--ink);line-height:1;}
+  .stat-sub{font-size:11px;color:var(--ink-muted);margin-top:3px;}
+  .stat-accent{color:var(--accent);}
+
+  .table{width:100%;border-collapse:collapse;}
+  .table th{text-align:left;font-size:9.5px;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink-muted);padding:9px 12px;border-bottom:1px solid var(--border);font-weight:600;}
+  .table td{padding:10px 12px;font-size:12.5px;border-bottom:1px solid var(--cream-dark);vertical-align:middle;color:var(--ink);}
+  .table tr:last-child td{border-bottom:none;}
+  .table tr:hover td{background:var(--cream-dark);}
+
+  .badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:500;}
+  .badge-success{background:${dark?"rgba(62,125,82,0.25)":"#E5F2EA"};color:#5DB87A;}
+  .badge-warning{background:${dark?"rgba(176,125,10,0.25)":"#FFF7E0"};color:#D4AA2A;}
+  .badge-danger{background:${dark?"rgba(148,53,53,0.25)":"#FDECEA"};color:#E07070;}
+  .badge-info{background:${dark?"rgba(42,90,138,0.3)":"#E0ECF8"};color:#5A9ACA;}
+  .badge-neutral{background:var(--cream-dark);color:var(--ink-light);}
+  .badge-accent{background:var(--accent-pale);color:var(--accent);}
+  .badge-posted{background:${dark?"#2A3A2A":"#141414"};color:#E8C88A;}
+
+  .btn{display:inline-flex;align-items:center;gap:5px;padding:7px 15px;border-radius:7px;font-size:12px;font-weight:500;cursor:pointer;border:none;transition:all 0.18s;font-family:'DM Sans',sans-serif;}
+  .btn:disabled{opacity:0.45;cursor:not-allowed;}
+  .btn-primary{background:${dark?"#C4954A":"#141414"};color:white;}
+  .btn-primary:hover:not(:disabled){background:${dark?"#b07a35":"#2a2a2a"};}
+  .btn-accent{background:var(--accent);color:white;}
+  .btn-accent:hover:not(:disabled){background:#b07a35;}
+  .btn-ghost{background:transparent;color:var(--ink-light);border:1px solid var(--border);}
+  .btn-ghost:hover:not(:disabled){background:var(--cream-dark);}
+  .btn-danger{background:var(--danger);color:white;}
+  .btn-success{background:var(--success);color:white;}
+  .btn-sm{padding:5px 11px;font-size:11px;}
+
+  .form-group{margin-bottom:13px;}
+  .form-label{display:block;font-size:10px;font-weight:600;letter-spacing:0.8px;text-transform:uppercase;color:var(--ink-muted);margin-bottom:5px;}
+  .form-input{width:100%;padding:8px 11px;border:1px solid var(--border);border-radius:7px;font-size:12.5px;font-family:'DM Sans',sans-serif;background:var(--surface);color:var(--ink);outline:none;transition:border-color 0.18s;}
+  .form-input:focus{border-color:var(--accent-light);box-shadow:0 0 0 3px rgba(196,149,74,0.1);}
+  .form-select{appearance:none;cursor:pointer;}
+  .form-textarea{resize:vertical;min-height:72px;}
+
+  .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:13px;}
+  .section-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:17px;}
+  .section-title{font-family:'Cormorant Garamond',serif;font-size:24px;color:var(--ink);font-weight:600;}
+  .section-sub{font-size:12px;color:var(--ink-muted);margin-top:2px;}
+
+  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;z-index:200;padding:20px;backdrop-filter:blur(4px);}
+  .modal{background:var(--surface);border-radius:16px;width:100%;max-width:530px;max-height:90vh;overflow-y:auto;padding:24px;position:relative;}
+  .modal-lg{max-width:720px;}
+  .modal-xl{max-width:920px;}
+
+  .login-page{min-height:100vh;background:#080510;display:flex;align-items:center;justify-content:center;padding:20px;position:relative;overflow:hidden;}
+  .login-card{background:${dark?"rgba(12,10,22,0.82)":"rgba(255,255,255,0.88)"};border-radius:24px;padding:44px 38px;width:100%;max-width:420px;position:relative;z-index:10;backdrop-filter:blur(28px);-webkit-backdrop-filter:blur(28px);border:1px solid ${dark?"rgba(255,255,255,0.08)":"rgba(255,255,255,0.6)"};}
+  .login-brand{font-family:'Cormorant Garamond',serif;font-size:32px;font-weight:700;color:${dark?"#E8E0D0":"#141414"};letter-spacing:-1px;text-align:center;}
+  .login-brand em{font-style:italic;color:#E8608A;}
+  .login-sub{font-size:10px;letter-spacing:3px;text-transform:uppercase;color:var(--ink-muted);text-align:center;margin-top:5px;margin-bottom:30px;}
+
+  .today-task-row{display:flex;align-items:center;gap:11px;padding:10px 13px;border-radius:9px;margin-bottom:7px;border:1px solid var(--border);background:var(--surface2);transition:all 0.2s;}
+  .today-task-row.posted{background:${dark?"rgba(62,125,82,0.15)":"#E5F2EA"};border-color:${dark?"rgba(62,125,82,0.3)":"#B8DFC4"};opacity:0.78;}
+  .task-check{width:21px;height:21px;border-radius:50%;border:2px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0;transition:all 0.18s;background:var(--surface);}
+  .task-check.checked{background:var(--success);border-color:var(--success);color:white;}
+
+  .stage-dot{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;flex-shrink:0;}
+  .stage-line{flex:1;height:2px;margin-top:9px;}
+  .stage-active{background:var(--accent);color:white;}
+  .stage-done{background:var(--success);color:white;}
+  .stage-pending{background:var(--cream-dark);color:var(--ink-muted);}
+
+  .punch-display{background:${dark?"#0D1B2A":"#141414"};color:white;border-radius:16px;padding:24px;text-align:center;}
+  .punch-time{font-family:'Cormorant Garamond',serif;font-size:52px;letter-spacing:-2px;margin:5px 0;}
+  .punch-date{font-size:11.5px;color:rgba(255,255,255,0.42);letter-spacing:1px;}
+
+  .upload-zone{border:2px dashed var(--border);border-radius:11px;padding:24px;text-align:center;cursor:pointer;transition:all 0.2s;background:var(--surface2);}
+  .upload-zone:hover{border-color:var(--accent-light);background:var(--accent-pale);}
+  .media-preview-thumb{width:100%;max-height:280px;object-fit:contain;border-radius:9px;border:1px solid var(--border);background:var(--cream-dark);cursor:pointer;display:block;}
+  .media-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:300;display:flex;align-items:center;justify-content:center;padding:20px;}
+  .media-overlay img,.media-overlay video{max-width:90vw;max-height:88vh;border-radius:10px;object-fit:contain;}
+  .media-close{position:absolute;top:16px;right:20px;color:white;font-size:20px;cursor:pointer;background:rgba(255,255,255,0.12);border:none;border-radius:50%;width:36px;height:36px;display:flex;align-items:center;justify-content:center;}
+
+  .ai-badge{display:inline-flex;align-items:center;gap:4px;background:linear-gradient(135deg,#141420,#1A2035);color:#E8C88A;font-size:9px;padding:2px 7px;border-radius:20px;letter-spacing:1px;text-transform:uppercase;font-weight:700;}
+  .generating{animation:pulse 1.4s ease-in-out infinite;}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.4;}}
+
+  .tabs{display:flex;border-bottom:1px solid var(--border);margin-bottom:16px;}
+  .tab{padding:8px 15px;font-size:12px;font-weight:500;cursor:pointer;color:var(--ink-muted);border-bottom:2px solid transparent;transition:all 0.18s;margin-bottom:-1px;}
+  .tab.active{color:var(--ink);border-bottom-color:var(--accent);}
+
+  .divider{border:none;border-top:1px solid var(--cream-dark);margin:13px 0;}
+  .empty{text-align:center;padding:34px;color:var(--ink-muted);}
+  .empty-icon{font-size:30px;margin-bottom:9px;}
+  .empty h4{font-size:14.5px;color:var(--ink-light);margin-bottom:4px;}
+
+  .flex{display:flex;}.items-center{align-items:center;}.justify-between{justify-content:space-between;}
+  .gap-8{gap:8px;}.gap-12{gap:12px;}.gap-16{gap:16px;}
+  .mt-4{margin-top:4px;}.mt-8{margin-top:8px;}.mt-12{margin-top:12px;}.mt-16{margin-top:16px;}.mt-20{margin-top:20px;}
+  .mb-8{margin-bottom:8px;}.mb-12{margin-bottom:12px;}.mb-16{margin-bottom:16px;}
+  .text-sm{font-size:11.5px;}.text-muted{color:var(--ink-muted);}.text-accent{color:var(--accent);}
+  .font-medium{font-weight:500;}.w-full{width:100%;}
+
+  /* ── WAVE THEME ── */
+  @keyframes barShimmer{0%{opacity:0.5;}50%{opacity:0.9;}100%{opacity:0.5;}}
+  @keyframes waveShimmer{0%{background-position:0% 50%;}100%{background-position:300% 50%;}}
+
+  /* Dashboard banner */
+  .dashboard-mural{position:relative;overflow:hidden;border-radius:16px;background:linear-gradient(160deg,#1A0820 0%,#2D1245 35%,#1A0D35 65%,#080F28 100%);padding:30px 28px;margin-bottom:20px;color:white;}
+  .mural-greeting{font-family:'Cormorant Garamond',serif;font-size:36px;font-weight:700;line-height:1.1;position:relative;z-index:2;}
+  .mural-greeting em{font-style:italic;color:#F4C08A;}
+  .mural-sub{font-size:12px;color:rgba(255,255,255,0.42);margin-top:6px;position:relative;z-index:2;letter-spacing:0.5px;}
+  .mural-stats{display:flex;gap:28px;margin-top:20px;position:relative;z-index:2;}
+  .mural-stat{text-align:center;}
+  .mural-stat-val{font-family:'Cormorant Garamond',serif;font-size:30px;color:#F4C08A;line-height:1;}
+  .mural-stat-lbl{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:rgba(255,255,255,0.32);margin-top:3px;}
+
+  /* Login page wave bg */
+  .login-wave-bg{position:absolute;inset:0;overflow:hidden;z-index:0;}
+
+  /* ── CONTENT CALENDAR ── */
+  .cc-wrap{display:grid;grid-template-columns:1fr 300px;gap:18px;align-items:start;}
+  .cc-main{background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden;}
+  .cc-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border);}
+  .cc-month-title{font-family:'Cormorant Garamond',serif;font-size:22px;font-weight:700;color:var(--ink);}
+  .cc-nav{background:none;border:1px solid var(--border);border-radius:7px;width:30px;height:30px;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;color:var(--ink-muted);transition:all 0.15s;}
+  .cc-nav:hover{background:var(--cream-dark);}
+  .cc-dow-row{display:grid;grid-template-columns:repeat(7,1fr);border-bottom:1px solid var(--border);}
+  .cc-dow{text-align:center;font-size:9px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:var(--ink-muted);padding:9px 0;}
+  .cc-grid{display:grid;grid-template-columns:repeat(7,1fr);}
+  .cc-cell{border-right:1px solid var(--cream-dark);border-bottom:1px solid var(--cream-dark);min-height:96px;padding:6px 7px;cursor:pointer;transition:background 0.12s;position:relative;}
+  .cc-cell:hover{background:var(--accent-pale);}
+  .cc-cell.today{background:rgba(196,149,74,0.06);}
+  .cc-cell.today .cc-daynum{background:#141414;color:white;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;}
+  .cc-cell.other-month{opacity:0.35;}
+  .cc-cell.selected{background:var(--accent-pale);border-color:var(--accent-light);}
+  .cc-cell:nth-child(7n){border-right:none;}
+  .cc-daynum{font-size:11.5px;font-weight:600;color:var(--ink-muted);margin-bottom:4px;width:22px;height:22px;display:flex;align-items:center;justify-content:center;}
+  .cc-festival{font-size:8.5px;padding:2px 5px;border-radius:4px;margin-bottom:2px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;cursor:pointer;}
+  .cc-festival.major{background:linear-gradient(90deg,rgba(232,85,58,0.18),rgba(244,160,48,0.18));color:#C4520A;border-left:2px solid #E8553A;}
+  .cc-festival.regional{background:rgba(139,75,174,0.12);color:#7B35A8;border-left:2px solid #8B4BAE;}
+  .cc-festival.national{background:rgba(45,71,163,0.12);color:#1E3A8A;border-left:2px solid #2D47A3;}
+  .cc-post-dot{width:6px;height:6px;border-radius:50%;background:var(--accent);display:inline-block;margin:1px;}
+  .cc-post-chip{font-size:8.5px;padding:2px 6px;border-radius:4px;background:var(--accent-pale);color:var(--accent);margin-bottom:2px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500;}
+  .cc-sidebar{display:flex;flex-direction:column;gap:14px;}
+  .cc-side-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;}
+  .cc-side-title{font-family:'Cormorant Garamond',serif;font-size:15px;font-weight:600;color:var(--ink);margin-bottom:12px;}
+  .festival-tag{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:20px;font-size:10px;font-weight:600;cursor:pointer;margin:3px;transition:all 0.15s;border:1px solid transparent;}
+  .festival-tag:hover{opacity:0.8;}
+  .festival-tag.major{background:rgba(232,85,58,0.12);color:#C4520A;border-color:rgba(232,85,58,0.25);}
+  .festival-tag.regional{background:rgba(139,75,174,0.12);color:#7B35A8;border-color:rgba(139,75,174,0.25);}
+  .festival-tag.national{background:rgba(45,71,163,0.12);color:#1E3A8A;border-color:rgba(45,71,163,0.25);}
+  .cc-day-panel{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;}
+  .cc-legend{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;}
+  .cc-legend-item{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--ink-muted);}
+  .cc-legend-dot{width:8px;height:8px;border-radius:2px;}
+
+  /* ── HR CAL ── */
+  .hr-cal-wrap{display:grid;grid-template-columns:1fr 290px;gap:16px;margin-top:16px;}
+  .hr-big-cal{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;}
+  .hr-cal-header{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border);}
+  .hr-cal-month{font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:600;color:var(--ink);}
+  .hr-cal-grid{display:grid;grid-template-columns:repeat(7,1fr);}
+  .hr-dow{text-align:center;font-size:9px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--ink-muted);padding:10px 0;border-bottom:1px solid var(--border);}
+  .hr-day{border-right:1px solid var(--cream-dark);border-bottom:1px solid var(--cream-dark);min-height:78px;padding:5px;cursor:pointer;transition:background 0.15s;}
+  .hr-day:hover{background:var(--cream-dark);}
+  .hr-day.selected{background:var(--accent-pale);}
+  .hr-day-num{font-size:11px;font-weight:600;color:var(--ink-muted);margin-bottom:3px;}
+  .hr-day-chip{font-size:9px;padding:1px 5px;border-radius:4px;margin-bottom:2px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500;}
+  .chip-present{background:${dark?"rgba(62,125,82,0.3)":"#E5F2EA"};color:#5DB87A;}
+  .chip-absent{background:${dark?"rgba(148,53,53,0.3)":"#FDECEA"};color:#E07070;}
+  .chip-leave{background:${dark?"rgba(176,125,10,0.3)":"#FFF7E0"};color:#D4AA2A;}
+  .hr-day-panel{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;position:sticky;top:80px;max-height:500px;overflow-y:auto;}
+  .emp-row{display:flex;align-items:flex-start;gap:9px;padding:10px 0;border-bottom:1px solid var(--cream-dark);}
+  .emp-row:last-child{border-bottom:none;}
+
+  /* ── CHAT ── */
+  .chat-panel{position:fixed;right:0;top:0;bottom:0;width:var(--chat-w);background:${dark?"#0D1B2A":"#FFFFFF"};border-left:1px solid var(--border);display:flex;flex-direction:column;z-index:90;transform:translateX(100%);transition:transform 0.28s cubic-bezier(0.4,0,0.2,1);}
+  .chat-panel.open{transform:translateX(0);}
+  .chat-header{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;}
+  .chat-title{font-family:'Cormorant Garamond',serif;font-size:17px;font-weight:600;color:var(--ink);flex:1;}
+  .chat-contact-list{overflow-y:auto;flex:1;}
+  .chat-contact{display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);transition:background 0.15s;}
+  .chat-contact:hover,.chat-contact.active{background:var(--cream-dark);}
+  .chat-contact-info{flex:1;}
+  .chat-contact-name{font-size:12.5px;font-weight:600;color:var(--ink);}
+  .chat-contact-last{font-size:10.5px;color:var(--ink-muted);}
+  .status-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
+  .status-online{background:#4ADE80;}
+  .status-offline{background:#94A3B8;}
+  .chat-body{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px;}
+  .chat-bubble{max-width:78%;padding:8px 12px;border-radius:12px;font-size:12px;line-height:1.5;}
+  .chat-bubble.mine{background:var(--accent);color:white;align-self:flex-end;border-bottom-right-radius:3px;}
+  .chat-bubble.theirs{background:var(--cream-dark);color:var(--ink);align-self:flex-start;border-bottom-left-radius:3px;}
+  .chat-bubble-time{font-size:9px;opacity:0.6;margin-top:3px;text-align:right;}
+  .chat-input-row{padding:10px 12px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center;}
+  .chat-input{flex:1;padding:7px 12px;border:1px solid var(--border);border-radius:20px;font-size:12px;font-family:'DM Sans',sans-serif;background:var(--surface2);color:var(--ink);outline:none;}
+  .chat-send{width:30px;height:30px;border-radius:50%;background:var(--accent);border:none;color:white;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:12px;}
+  .chat-back{background:none;border:none;cursor:pointer;color:var(--ink-muted);font-size:16px;padding:2px;}
+  .meeting-bar{padding:10px 14px;background:${dark?"rgba(196,149,74,0.1)":"var(--accent-pale)"};border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;}
+  .meeting-chip{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:600;color:var(--accent);letter-spacing:0.5px;}
+  .call-btn{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:20px;font-size:10px;font-weight:600;cursor:pointer;border:none;transition:all 0.18s;}
+  .call-btn-video{background:var(--success);color:white;}
+  .call-btn-audio{background:var(--info);color:white;}
+
+  /* ── VIDEO CALL MODAL ── */
+  .video-call-modal{position:fixed;inset:0;background:rgba(0,0,0,0.95);z-index:400;display:flex;flex-direction:column;}
+  .vc-header{padding:16px 24px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.1);}
+  .vc-grid{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:2px;padding:2px;}
+  .vc-tile{background:#1a1a2e;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;position:relative;border-radius:4px;}
+  .vc-tile-name{position:absolute;bottom:12px;left:12px;background:rgba(0,0,0,0.6);color:white;font-size:11px;padding:2px 8px;border-radius:10px;}
+  .vc-controls{padding:16px;display:flex;align-items:center;justify-content:center;gap:16px;border-top:1px solid rgba(255,255,255,0.1);}
+  .vc-btn{width:46px;height:46px;border-radius:50%;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:18px;transition:all 0.18s;}
+  .vc-btn-red{background:#E74C3C;color:white;}
+  .vc-btn-gray{background:rgba(255,255,255,0.15);color:white;}
+  .vc-btn-green{background:#27AE60;color:white;}
+
+  /* ── PLANNER ── */
+  .mini-cal{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;}
+  .mini-cal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:11px;}
+  .mini-cal-title{font-family:'Cormorant Garamond',serif;font-size:15px;font-weight:600;color:var(--ink);}
+  .mini-cal-nav{background:none;border:1px solid var(--border);border-radius:5px;width:24px;height:24px;cursor:pointer;font-size:11px;display:flex;align-items:center;justify-content:center;color:var(--ink-muted);}
+  .mini-cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;}
+  .mini-cal-dow{text-align:center;font-size:8.5px;font-weight:700;color:var(--ink-muted);padding:3px 0;}
+  .mini-cal-day{text-align:center;font-size:11px;padding:5px 2px;border-radius:5px;cursor:pointer;color:var(--ink);transition:all 0.15s;}
+  .mini-cal-day:hover{background:var(--cream-dark);}
+  .mini-cal-day.selected{background:${dark?"var(--accent)":"#141414"};color:white;}
+  .mini-cal-day.has-event{font-weight:700;color:var(--accent);}
+  .timeline-wrap{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;}
+  .timeline-header{padding:13px 17px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
+  .timeline-date{font-family:'Cormorant Garamond',serif;font-size:17px;font-weight:600;color:var(--ink);}
+  .timeline-body{height:580px;overflow-y:auto;}
+  .hour-row{display:flex;border-bottom:1px solid var(--cream-dark);min-height:58px;}
+  .hour-label{width:52px;flex-shrink:0;padding:5px 8px 5px 12px;font-size:10px;color:var(--ink-muted);font-weight:500;border-right:1px solid var(--cream-dark);line-height:1;}
+  .hour-slot{flex:1;position:relative;cursor:pointer;}
+  .hour-slot:hover{background:rgba(196,149,74,0.04);}
+  .event-block{position:absolute;left:5px;right:5px;top:2px;border-radius:7px;padding:5px 8px;font-size:11px;font-weight:500;color:white;overflow:hidden;cursor:pointer;box-shadow:0 2px 5px rgba(0,0,0,0.15);z-index:2;}
+  .add-hint{position:absolute;inset:0;display:flex;align-items:center;padding-left:10px;opacity:0;transition:opacity 0.15s;font-size:10.5px;color:var(--ink-muted);}
+  .hour-slot:hover .add-hint{opacity:1;}
+
+  /* ── AI ASSESSMENT ── */
+  .assessment-prose{font-size:13px;line-height:1.8;color:var(--ink-light);}
+  .assessment-prose h2{font-family:'Cormorant Garamond',serif;font-size:18px;font-weight:600;color:var(--ink);margin:18px 0 6px;}
+  .assessment-prose h2:first-child{margin-top:0;}
+  .assessment-prose ul{padding-left:20px;margin-top:4px;}
+  .assessment-prose li{margin-bottom:4px;}
+  .assessment-prose p{margin-bottom:8px;}
+  .assess-emp-row{display:flex;align-items:center;gap:12px;padding:13px 16px;border:1px solid var(--border);border-radius:10px;margin-bottom:10px;background:var(--surface);cursor:pointer;transition:all 0.18s;}
+  .assess-emp-row:hover{border-color:var(--accent-light);background:var(--accent-pale);}
+  .score-chip{background:${dark?"var(--accent)":"#141414"};color:var(--accent-light);font-family:'Cormorant Garamond',serif;font-size:18px;font-weight:700;width:42px;height:42px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+
+  /* ── SETTINGS ── */
+  .settings-grid{display:grid;grid-template-columns:200px 1fr;gap:20px;align-items:start;}
+  .settings-nav{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;}
+  .settings-nav-item{display:flex;align-items:center;gap:9px;padding:12px 16px;cursor:pointer;font-size:13px;color:var(--ink-light);border-left:2px solid transparent;transition:all 0.18s;}
+  .settings-nav-item:hover{background:var(--cream-dark);color:var(--ink);}
+  .settings-nav-item.active{color:var(--accent);border-left-color:var(--accent);background:var(--accent-pale);}
+  .settings-section{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px;}
+  .settings-title{font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:600;color:var(--ink);margin-bottom:18px;}
+  .theme-card{border:2px solid var(--border);border-radius:10px;padding:16px;cursor:pointer;transition:all 0.2s;flex:1;text-align:center;}
+  .theme-card.selected{border-color:var(--accent);background:var(--accent-pale);}
+  .theme-preview{width:100%;height:50px;border-radius:6px;margin-bottom:8px;}
+
+  .toggle-switch{width:42px;height:22px;border-radius:11px;background:var(--border);position:relative;cursor:pointer;transition:background 0.2s;flex-shrink:0;}
+  .toggle-switch.on{background:var(--success);}
+  .toggle-knob{position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:white;transition:left 0.2s;box-shadow:0 1px 3px rgba(0,0,0,0.3);}
+  .toggle-switch.on .toggle-knob{left:23px;}
+`;
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function getStatusBadge(status){
+  const map={pending_admin:["warning","Pending Admin"],pending_superadmin:["warning","Pending SA"],approved_client:["success","Client Approved"],rejected:["danger","Rejected"],posted:["posted","✓ Posted"],draft:["neutral","Draft"],active:["success","Active"],enquiry:["info","Enquiry"],closed:["neutral","Closed"],approved:["success","Approved"],pending:["warning","Pending"]};
+  const [t,l]=map[status]||["neutral",status];
+  return <span className={`badge badge-${t}`}>{l}</span>;
+}
+
+// ─── WAVE THEME SYSTEM ────────────────────────────────────────────────────────
+// Inspired by layered colour-wave mural: warm reds/oranges fade to cool purples/blues
+// Used subtly like Apple — just a whisper of colour behind clean UI
+
+// Animated SVG wave — used in dashboard banner and login bg
+function WavesSVG({ height=160, opacity=0.18, phase=0 }) {
+  // Five wave layers inspired by the image palette
+  const waves = [
+    { color:"#E8553A", cy:height*0.18, amp:22, freq:0.012, spd:0 },
+    { color:"#F4A030", cy:height*0.32, amp:18, freq:0.010, spd:0.4 },
+    { color:"#E8608A", cy:height*0.50, amp:20, freq:0.013, spd:0.7 },
+    { color:"#8B4BAE", cy:height*0.68, amp:22, freq:0.011, spd:1.1 },
+    { color:"#2D47A3", cy:height*0.84, amp:18, freq:0.009, spd:1.5 },
+  ];
+  const W = 900;
+  function wavePath(cy, amp, freq, ph) {
+    let d = `M0,${height}`;
+    for(let x=0; x<=W; x+=8) {
+      const y = cy + amp * Math.sin(x * freq + ph);
+      d += ` L${x},${y.toFixed(1)}`;
+    }
+    d += ` L${W},${height} Z`;
+    return d;
+  }
+  return (
+    <svg style={{position:"absolute",inset:0,width:"100%",height:"100%",pointerEvents:"none"}}
+      viewBox={`0 0 ${W} ${height}`} preserveAspectRatio="xMidYMid slice">
+      {waves.map((w,i)=>(
+        <path key={i} d={wavePath(w.cy, w.amp, w.freq, phase+w.spd)}
+          fill={w.color} opacity={opacity - i*0.01} />
+      ))}
+    </svg>
+  );
+}
+
+// Thin top accent bar — the colour wave compressed into 3px. Apple-style.
+function WaveAccentBar({ phase }) {
+  const stops = [
+    {offset:"0%",   color:"#E8553A"},
+    {offset:"22%",  color:"#F4A030"},
+    {offset:"44%",  color:"#E8608A"},
+    {offset:"66%",  color:"#8B4BAE"},
+    {offset:"88%",  color:"#2D47A3"},
+    {offset:"100%", color:"#E8553A"},
+  ];
+  const id = "waveGrad";
+  return (
+    <svg style={{display:"block",width:"100%",height:3,position:"fixed",top:0,left:0,right:0,zIndex:300,pointerEvents:"none"}}>
+      <defs>
+        <linearGradient id={id} x1="0%" y1="0%" x2="100%" y2="0%">
+          {stops.map((s,i)=><stop key={i} offset={s.offset} stopColor={s.color}/>)}
+        </linearGradient>
+      </defs>
+      <rect width="100%" height="3" fill={`url(#${id})`} />
+      {/* Animated shimmer overlay */}
+      <rect width="100%" height="3" fill={`url(#${id})`} opacity="0.5" style={{animation:"barShimmer 4s linear infinite"}} />
+    </svg>
+  );
+}
+
+// Ambient background wave — very faint, just gives the page a warm/cool breath
+function AmbientWave({ dark, phase }) {
+  if(!phase && phase!==0) return null;
+  const bg = dark ? "rgba(20,12,30,0.0)" : "rgba(255,255,255,0.0)";
+  const stops = dark
+    ? [{c:"#2D1040",o:0.06},{c:"#1A0D35",o:0.04},{c:"#0A1535",o:0.05}]
+    : [{c:"#FDE8E0",o:0.28},{c:"#FDE8F8",o:0.18},{c:"#E0E8FD",o:0.22}];
+  return (
+    <div style={{position:"fixed",inset:0,pointerEvents:"none",zIndex:0,overflow:"hidden"}}>
+      {/* Three very subtle blobs that drift — red, purple, blue tones */}
+      <div style={{
+        position:"absolute", borderRadius:"50%",
+        width:600, height:600, top:-150, right:-100,
+        background:`radial-gradient(circle, ${stops[0].c} 0%, transparent 70%)`,
+        opacity: stops[0].o,
+        transform:`translateY(${Math.sin(phase)*18}px)`,
+        transition:"transform 0.1s linear",
+        filter:"blur(80px)",
+      }}/>
+      <div style={{
+        position:"absolute", borderRadius:"50%",
+        width:500, height:500, bottom:-100, left:-80,
+        background:`radial-gradient(circle, ${stops[2].c} 0%, transparent 70%)`,
+        opacity: stops[2].o,
+        transform:`translateY(${-Math.sin(phase*0.7)*14}px)`,
+        transition:"transform 0.1s linear",
+        filter:"blur(90px)",
+      }}/>
+      <div style={{
+        position:"absolute", borderRadius:"50%",
+        width:400, height:400, top:"40%", left:"30%",
+        background:`radial-gradient(circle, ${stops[1].c} 0%, transparent 70%)`,
+        opacity: stops[1].o,
+        transform:`translate(${Math.cos(phase*0.5)*12}px, ${Math.sin(phase*0.5)*10}px)`,
+        transition:"transform 0.1s linear",
+        filter:"blur(100px)",
+      }}/>
+    </div>
+  );
+}
+
+// ─── MODAL ────────────────────────────────────────────────────────────────────
+function Modal({ title, onClose, children, lg, xl }) {
+  return (
+    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div className={`modal ${xl?"modal-xl":lg?"modal-lg":""}`}>
+        <div className="flex items-center justify-between mb-16">
+          <h3 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:19,fontWeight:600,color:"var(--ink)"}}>{title}</h3>
+          <button onClick={onClose} className="icon-btn">✕</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function MediaLightbox({ src, type, onClose }) {
+  return (
+    <div className="media-overlay" onClick={onClose}>
+      <button className="media-close" onClick={onClose}>✕</button>
+      {type==="video"?<video src={src} controls autoPlay onClick={e=>e.stopPropagation()} />:<img src={src} alt="" onClick={e=>e.stopPropagation()} />}
+    </div>
+  );
+}
+function MediaDisplay({ item }) {
+  const [lb,setLb]=useState(false);
+  if(!item.mediaDataUrl) return <p className="text-muted text-sm">No media uploaded.</p>;
+  return (
+    <div>
+      {item.mediaType==="video"?<video src={item.mediaDataUrl} className="media-preview-thumb" onClick={()=>setLb(true)} style={{maxHeight:200}} />:<img src={item.mediaDataUrl} className="media-preview-thumb" style={{maxHeight:200}} alt="" onClick={()=>setLb(true)} />}
+      <button className="btn btn-ghost btn-sm mt-8" onClick={()=>setLb(true)}>🔍 Full Size</button>
+      {lb&&<MediaLightbox src={item.mediaDataUrl} type={item.mediaType} onClose={()=>setLb(false)} />}
+    </div>
+  );
+}
+
+// ─── LOGIN ────────────────────────────────────────────────────────────────────
+function LoginPage({ onLogin, dark, phase, users }) {
+  const [username,setUsername]=useState(""); const [pw,setPw]=useState(""); const [err,setErr]=useState("");
+  function login(){ const found=users.find(x=>x.username===username&&x.password===pw); found?onLogin(found):setErr("Invalid username or password."); }
+  return (
+    <div className="login-page">
+      <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:0}}>
+        <WavesSVG height={window.innerHeight||700} opacity={0.55} phase={phase} />
+      </div>
+      <div style={{position:"absolute",inset:0,background:"rgba(8,5,20,0.52)",zIndex:1}} />
+      <div className="login-card">
+        <div className="login-brand">Flow <em>by</em> Anecdote</div>
+        <p className="login-sub">Agency Management Platform</p>
+        <div className="form-group"><label className="form-label">Username</label><input className="form-input" value={username} onChange={e=>setUsername(e.target.value)} onKeyDown={e=>e.key==="Enter"&&login()} placeholder="Username" autoComplete="username" /></div>
+        <div className="form-group"><label className="form-label">Password</label><input className="form-input" type="password" value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={e=>e.key==="Enter"&&login()} autoComplete="current-password" /></div>
+        {err&&<p style={{color:"#ff7b7b",fontSize:12,marginBottom:9}}>{err}</p>}
+        <button className="btn btn-primary w-full" style={{justifyContent:"center",padding:"11px"}} onClick={login}>Sign In →</button>
+      </div>
+    </div>
+  );
+}
+
+// ─── SIDEBAR ──────────────────────────────────────────────────────────────────
+function Sidebar({ user, active, setActive, pendingCount, chatUnread }) {
+  const isSA=user.role==="superadmin", isAdmin=user.role==="admin"||isSA;
+  const sections=[
+    {label:"Main",items:[{key:"dashboard",icon:"◈",label:"Dashboard"},{key:"punch",icon:"⏱",label:"Attendance"},{key:"notes",icon:"✦",label:"My Planner"},{key:"chat",icon:"💬",label:"Team Chat",badge:chatUnread}]},
+    {label:"Clients",items:[{key:"clients",icon:"◉",label:"Clients"},{key:"calendar",icon:"⊞",label:"Content Calendar"},{key:"content",icon:"◫",label:"Content"}]},
+    ...(isAdmin?[{label:"Admin",items:[{key:"approvals",icon:"✓",label:"Approvals",badge:pendingCount},...(isSA?[{key:"hr",icon:"⊕",label:"HR & Team"},{key:"assessment",icon:"◐",label:"AI Assessment"},{key:"logins",icon:"⊗",label:"User Logins"}]:[])]}]:[{label:"HR",items:[{key:"hr",icon:"⊕",label:"My Leaves"}]}]),
+    {label:"Account",items:[{key:"settings",icon:"⚙",label:"Settings"}]}
+  ];
+  return (
+    <div className="sidebar">
+      <div className="sidebar-logo">
+        <div className="logo-wordmark">Flow <em>by</em> Anecdote</div>
+        <div className="logo-byline">Agency OS</div>
+      </div>
+      {sections.map(s=>(
+        <div className="sidebar-section" key={s.label}>
+          <div className="sidebar-section-label">{s.label}</div>
+          {s.items.map(item=>(
+            <div key={item.key} className={`nav-item ${active===item.key?"active":""}`} onClick={()=>setActive(item.key)}>
+              <span className="nav-icon">{item.icon}</span>{item.label}
+              {item.badge>0&&<span className="nav-badge">{item.badge}</span>}
+            </div>
+          ))}
+        </div>
+      ))}
+      <div className="sidebar-footer">
+        <div className="user-chip">
+          <div className="avatar">{user.avatar}</div>
+          <div><div className="user-name">{user.name}</div><div className="user-role">{user.username}</div></div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── VIDEO CALL ────────────────────────────────────────────────────────────────
+function VideoCallModal({ participants, onEnd }) {
+  const [muted,setMuted]=useState(false);
+  const [videoOff,setVideoOff]=useState(false);
+  const [elapsed,setElapsed]=useState(0);
+  useEffect(()=>{const iv=setInterval(()=>setElapsed(p=>p+1),1000);return()=>clearInterval(iv);},[]);
+  const fmt=s=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
+  const colors=["#C4954A","#2E5F8A","#4A7C59","#9B3A3A"];
+  return(
+    <div className="video-call-modal">
+      <div className="vc-header">
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <div style={{width:8,height:8,borderRadius:"50%",background:"#4ADE80",animation:"pulse 1.5s ease-in-out infinite"}} />
+          <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:18,color:"white",fontWeight:600}}>Flow Meet</span>
+          <span style={{fontSize:12,color:"rgba(255,255,255,0.5)"}}>{fmt(elapsed)}</span>
+        </div>
+        <span style={{fontSize:11,color:"rgba(255,255,255,0.4)"}}>End-to-end encrypted · {participants.length} participants</span>
+      </div>
+      <div className="vc-grid" style={{gridTemplateColumns:participants.length<=2?"1fr 1fr":`repeat(${Math.min(participants.length,3)},1fr)`}}>
+        {participants.map((p,i)=>(
+          <div key={p.id} className="vc-tile">
+            <div style={{width:72,height:72,borderRadius:"50%",background:colors[i%4],display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Cormorant Garamond',serif",fontSize:26,color:"white",fontWeight:700,boxShadow:`0 0 0 3px ${colors[i%4]}44`}}>{p.avatar}</div>
+            <div style={{fontSize:12,color:"rgba(255,255,255,0.6)"}}>{videoOff&&i===0?"Camera Off":""}</div>
+            <div className="vc-tile-name">{p.name}{i===0?" (You)":""}</div>
+            {/* Subtle animated ring for active speaker */}
+            {i===0&&<div style={{position:"absolute",inset:0,border:"2px solid #4ADE80",borderRadius:4,opacity:0.3,animation:"pulse 2s ease-in-out infinite"}} />}
+          </div>
+        ))}
+      </div>
+      <div className="vc-controls">
+        <button className={`vc-btn ${muted?"vc-btn-red":"vc-btn-gray"}`} onClick={()=>setMuted(p=>!p)} title={muted?"Unmute":"Mute"}>{muted?"🔇":"🎤"}</button>
+        <button className={`vc-btn ${videoOff?"vc-btn-red":"vc-btn-gray"}`} onClick={()=>setVideoOff(p=>!p)} title="Toggle Camera">{videoOff?"📵":"📷"}</button>
+        <button className="vc-btn vc-btn-gray" title="Share Screen">🖥</button>
+        <button className="vc-btn vc-btn-green" title="Chat">💬</button>
+        <button className="vc-btn vc-btn-red" onClick={onEnd} title="End Call">📵</button>
+      </div>
+    </div>
+  );
+}
+
+// ─── CHAT ─────────────────────────────────────────────────────────────────────
+function ChatPanel({ user, users, messages, setMessages, onlineIds, open }) {
+  const [thread,setThread]=useState(null); // null=list, "all"=group, userId=DM
+  const [input,setInput]=useState("");
+  const [call,setCall]=useState(null); // {type:'video'|'audio', participants}
+  const msgEndRef=useRef();
+
+  const visibleMsgs=thread==="all"
+    ? messages.filter(m=>m.toId==="all")
+    : messages.filter(m=>(m.fromId===user.id&&m.toId===thread)||(m.fromId===thread&&m.toId===user.id));
+
+  useEffect(()=>{ if(open&&thread) msgEndRef.current?.scrollIntoView({behavior:"smooth"}); },[messages,thread,open]);
+
+  function send(){
+    if(!input.trim()||!thread)return;
+    setMessages(p=>[...p,{id:Date.now(),fromId:user.id,toId:thread,text:input.trim(),time:nowStr(),date:todayISO()}]);
+    setInput("");
+  }
+  function startCall(type,participants){
+    setCall({type,participants:[users.find(u=>u.id===user.id),...participants]});
+  }
+
+  const others=users.filter(u=>u.id!==user.id);
+  const getUserById=id=>users.find(u=>u.id===id);
+
+  return(
+    <>
+      {call&&<VideoCallModal participants={call.participants} onEnd={()=>setCall(null)} />}
+      <div className={`chat-panel ${open?"open":""}`}>
+        <div style={{height:4,background:"linear-gradient(90deg,#C4954A,#E8C88A,#4A7C59,#2E5F8A)",flexShrink:0}} />
+        {!thread?(
+          <>
+            <div className="chat-header">
+              <span className="chat-title">Team Inbox</span>
+              <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                <div className="status-dot status-online" />
+                <span style={{fontSize:10,color:"var(--ink-muted)"}}>{onlineIds.length} online</span>
+              </div>
+            </div>
+            <div className="chat-contact-list">
+              {/* Group */}
+              <div className="chat-contact" onClick={()=>setThread("all")}>
+                <div className="avatar" style={{background:"linear-gradient(135deg,#C4954A,#9B3A3A)"}}>✦</div>
+                <div className="chat-contact-info">
+                  <div className="chat-contact-name">All Hands</div>
+                  <div className="chat-contact-last">Team channel</div>
+                </div>
+                <div className="flex items-center gap-8">
+                  <button className="call-btn call-btn-video" onClick={e=>{e.stopPropagation();startCall("video",others);}}>📹 Meet</button>
+                </div>
+              </div>
+              {others.map(u=>{
+                const isOnline=onlineIds.includes(u.id);
+                const lastMsg=messages.filter(m=>(m.fromId===u.id&&m.toId===user.id)||(m.fromId===user.id&&m.toId===u.id)).slice(-1)[0];
+                return(
+                  <div key={u.id} className="chat-contact" onClick={()=>setThread(u.id)}>
+                    <div style={{position:"relative"}}>
+                      <div className="avatar sm" style={{background:u.role==="admin"?"var(--accent)":u.role==="superadmin"?"#943535":"var(--info)"}}>{u.avatar}</div>
+                      <div className={`status-dot ${isOnline?"status-online":"status-offline"}`} style={{position:"absolute",bottom:0,right:0,border:"2px solid var(--surface)"}} />
+                    </div>
+                    <div className="chat-contact-info">
+                      <div className="chat-contact-name">{u.displayName||u.username}</div>
+                      <div className="chat-contact-last">{isOnline?"● Active now":"○ Away"}</div>
+                    </div>
+                    <button className="call-btn call-btn-video" style={{fontSize:9}} onClick={e=>{e.stopPropagation();startCall("video",[u]);}}>📹</button>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        ):(
+          <>
+            <div className="chat-header">
+              <button className="chat-back" onClick={()=>setThread(null)}>‹</button>
+              {thread==="all"?(
+                <div className="avatar" style={{background:"linear-gradient(135deg,#C4954A,#9B3A3A)",fontSize:13}}>✦</div>
+              ):(
+                <div style={{position:"relative"}}>
+                  <div className="avatar sm" style={{background:getUserById(thread)?.role==="admin"?"var(--accent)":"var(--info)"}}>{getUserById(thread)?.avatar}</div>
+                  <div className={`status-dot ${onlineIds.includes(thread)?"status-online":"status-offline"}`} style={{position:"absolute",bottom:0,right:-1,border:"2px solid var(--surface)"}} />
+                </div>
+              )}
+              <div style={{flex:1}}>
+                <div className="chat-contact-name">{thread==="all"?"All Hands":(getUserById(thread)?.displayName||getUserById(thread)?.username)}</div>
+                <div style={{fontSize:10,color:"var(--ink-muted)"}}>{thread==="all"?`${onlineIds.length} active`:onlineIds.includes(thread)?"Active now":"Away"}</div>
+              </div>
+              <div className="flex gap-8">
+                <button className="call-btn call-btn-audio" onClick={()=>startCall("audio",thread==="all"?others:[getUserById(thread)])}>📞</button>
+                <button className="call-btn call-btn-video" onClick={()=>startCall("video",thread==="all"?others:[getUserById(thread)])}>📹</button>
+              </div>
+            </div>
+            <div className="meeting-bar">
+              <span className="meeting-chip">✦ Flow Meet</span>
+              <span style={{flex:1,fontSize:10,color:"var(--ink-muted)"}}>Start a video meeting with this channel</span>
+              <button className="call-btn call-btn-video" onClick={()=>startCall("video",thread==="all"?others:[getUserById(thread)])}>📹 Start</button>
+            </div>
+            <div className="chat-body">
+              {visibleMsgs.length===0&&<div style={{textAlign:"center",color:"var(--ink-muted)",fontSize:12,marginTop:20}}>Start the conversation ✦</div>}
+              {visibleMsgs.map(m=>{
+                const isMe=m.fromId===user.id;
+                const sender=getUserById(m.fromId);
+                return(
+                  <div key={m.id} style={{display:"flex",flexDirection:"column",alignItems:isMe?"flex-end":"flex-start"}}>
+                    {!isMe&&<div style={{fontSize:10,color:"var(--ink-muted)",marginBottom:2,marginLeft:4}}>{sender?.displayName||sender?.username}</div>}
+                    <div className={`chat-bubble ${isMe?"mine":"theirs"}`}>
+                      {m.text}
+                      <div className="chat-bubble-time">{m.time}</div>
+                    </div>
+                  </div>
+                );
+              })}
+              <div ref={msgEndRef} />
+            </div>
+            <div className="chat-input-row">
+              <input className="chat-input" value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} placeholder="Message…" />
+              <button className="chat-send" onClick={send}>➤</button>
+            </div>
+          </>
+        )}
+      </div>
+    </>
+  );
+}
+
+// ─── SETTINGS ─────────────────────────────────────────────────────────────────
+function Settings({ user, users, setUsers, dark, setDark, onPasswordChange }) {
+  const [tab,setTab]=useState("profile");
+  const [pw,setPw]=useState({current:"",next:"",confirm:""});
+  const [pwMsg,setPwMsg]=useState("");
+  const [newUser,setNewUser]=useState({name:"",username:"",password:"",role:"executive",email:""});
+  const [nuMsg,setNuMsg]=useState("");
+  const isSA=user.role==="superadmin";
+
+  function changePw(){
+    if(pw.current!==user.password){setPwMsg("Current password is incorrect.");return;}
+    if(pw.next.length<6){setPwMsg("New password must be at least 6 characters.");return;}
+    if(pw.next!==pw.confirm){setPwMsg("Passwords do not match.");return;}
+    onPasswordChange(pw.next);
+    setPwMsg("✓ Password updated successfully.");
+    setPw({current:"",next:"",confirm:""});
+  }
+  function addUser(){
+    if(!newUser.name||!newUser.username||!newUser.password){setNuMsg("All fields are required.");return;}
+    if(users.find(u=>u.username===newUser.username)){setNuMsg("Username already taken.");return;}
+    const av=newUser.name.split(" ").map(n=>n[0]).join("").toUpperCase().slice(0,2);
+    setUsers(p=>[...p,{...newUser,id:Date.now(),avatar:av}]);
+    setNuMsg("✓ User added successfully.");
+    setNewUser({name:"",username:"",password:"",role:"executive",email:""});
+  }
+  function removeUser(id){setUsers(p=>p.filter(u=>u.id!==id));}
+
+  const navItems=[
+    {key:"profile",icon:"👤",label:"Profile & Password"},
+    {key:"theme",icon:"🎨",label:"Appearance"},
+    ...(isSA?[{key:"team",icon:"👥",label:"Manage Team"}]:[]),
+    {key:"about",icon:"ℹ",label:"About Flow"},
+  ];
+
+  return(
+    <div>
+      <div className="section-header"><div><h1 className="section-title">Settings</h1><p className="section-sub">Manage your account and preferences</p></div></div>
+      <div className="settings-grid">
+        <div className="settings-nav">
+          {navItems.map(n=>(
+            <div key={n.key} className={`settings-nav-item ${tab===n.key?"active":""}`} onClick={()=>setTab(n.key)}>
+              <span>{n.icon}</span>{n.label}
+            </div>
+          ))}
+        </div>
+        <div className="settings-section">
+          {/* PROFILE */}
+          {tab==="profile"&&(
+            <div>
+              <div className="settings-title">Profile & Password</div>
+              <div className="flex items-center gap-16 mb-20" style={{padding:"18px",background:"var(--cream-dark)",borderRadius:12}}>
+                <div className="avatar lg" style={{width:56,height:56,fontSize:20,background:user.role==="superadmin"?"#943535":user.role==="admin"?"var(--accent)":"var(--info)"}}>{user.avatar}</div>
+                <div>
+                  <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:20,fontWeight:600,color:"var(--ink)"}}>{user.name}</div>
+                  <div style={{fontSize:12,color:"var(--ink-muted)",marginTop:2}}>{user.username} · <span style={{textTransform:"capitalize"}}>{user.role.replace("superadmin","Super Admin")}</span></div>
+                </div>
+              </div>
+              <hr className="divider" />
+              <p style={{fontWeight:600,fontSize:13,marginBottom:14,color:"var(--ink)"}}>Change Password</p>
+              <div className="form-group"><label className="form-label">Current Password</label><input className="form-input" type="password" value={pw.current} onChange={e=>setPw(p=>({...p,current:e.target.value}))} /></div>
+              <div className="form-group"><label className="form-label">New Password</label><input className="form-input" type="password" value={pw.next} onChange={e=>setPw(p=>({...p,next:e.target.value}))} /></div>
+              <div className="form-group"><label className="form-label">Confirm New Password</label><input className="form-input" type="password" value={pw.confirm} onChange={e=>setPw(p=>({...p,confirm:e.target.value}))} /></div>
+              {pwMsg&&<p style={{fontSize:12,marginBottom:9,color:pwMsg.startsWith("✓")?"var(--success)":"var(--danger)"}}>{pwMsg}</p>}
+              <button className="btn btn-primary" onClick={changePw}>Update Password</button>
+            </div>
+          )}
+
+          {/* THEME */}
+          {tab==="theme"&&(
+            <div>
+              <div className="settings-title">Appearance</div>
+              <p style={{fontSize:12,color:"var(--ink-muted)",marginBottom:18}}>Choose your preferred visual theme for Flow.</p>
+              <div className="flex gap-12 mb-20">
+                {[{id:"light",label:"Light",bg:"#F6F1E9",card:"#FFF",text:"#141414"},{id:"dark",label:"Dark",bg:"#1A1A2E",card:"#1E2D4A",text:"#E8E0D0"}].map(t=>(
+                  <div key={t.id} className={`theme-card ${(!dark&&t.id==="light")||(dark&&t.id==="dark")?"selected":""}`} onClick={()=>setDark(t.id==="dark")}>
+                    <div className="theme-preview" style={{background:t.bg,border:`1px solid ${t.id==="light"?"#DDD5C0":"#2A3A5A"}`,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                      <div style={{width:28,height:20,background:t.card,borderRadius:4,border:`1px solid ${t.id==="light"?"#DDD":"#2A3A5A"}`}} />
+                      <div style={{width:40,height:8,background:t.text,borderRadius:3,opacity:0.6}} />
+                    </div>
+                    <div style={{fontSize:12,fontWeight:600,color:"var(--ink)"}}>{t.label}</div>
+                    {((!dark&&t.id==="light")||(dark&&t.id==="dark"))&&<div style={{fontSize:10,color:"var(--accent)",marginTop:3}}>✓ Active</div>}
+                  </div>
+                ))}
+              </div>
+              <div className="flex items-center justify-between" style={{padding:"14px 16px",background:"var(--cream-dark)",borderRadius:10}}>
+                <div><div style={{fontSize:13,fontWeight:500,color:"var(--ink)"}}>Dark Mode</div><div style={{fontSize:11,color:"var(--ink-muted)"}}>Switch between light and dark interface</div></div>
+                <div className={`toggle-switch ${dark?"on":""}`} onClick={()=>setDark(p=>!p)}>
+                  <div className="toggle-knob" />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* MANAGE TEAM (Super Admin only) */}
+          {tab==="team"&&isSA&&(
+            <div>
+              <div className="settings-title">Manage Team</div>
+              <p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:16,fontWeight:600,color:"var(--ink)",marginBottom:12}}>Add New Member</p>
+              <div className="grid-2">
+                <div className="form-group"><label className="form-label">Full Name</label><input className="form-input" value={newUser.name} onChange={e=>setNewUser(p=>({...p,name:e.target.value}))} /></div>
+                <div className="form-group"><label className="form-label">Username</label><input className="form-input" value={newUser.username} onChange={e=>setNewUser(p=>({...p,username:e.target.value}))} placeholder="e.g. Executive_3" /></div>
+                <div className="form-group"><label className="form-label">Password</label><input className="form-input" type="password" value={newUser.password} onChange={e=>setNewUser(p=>({...p,password:e.target.value}))} /></div>
+                <div className="form-group"><label className="form-label">Role</label>
+                  <select className="form-input form-select" value={newUser.role} onChange={e=>setNewUser(p=>({...p,role:e.target.value}))}>
+                    <option value="executive">Executive</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                </div>
+                <div className="form-group"><label className="form-label">Email (optional)</label><input className="form-input" value={newUser.email} onChange={e=>setNewUser(p=>({...p,email:e.target.value}))} /></div>
+              </div>
+              {nuMsg&&<p style={{fontSize:12,marginBottom:9,color:nuMsg.startsWith("✓")?"var(--success)":"var(--danger)"}}>{nuMsg}</p>}
+              <button className="btn btn-primary mb-20" onClick={addUser}>+ Add Member</button>
+              <hr className="divider" />
+              <p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:16,fontWeight:600,color:"var(--ink)",marginBottom:12}}>Current Team</p>
+              {users.map(u=>(
+                <div key={u.id} className="flex items-center justify-between" style={{padding:"10px 14px",background:"var(--cream-dark)",borderRadius:9,marginBottom:8}}>
+                  <div className="flex items-center gap-10">
+                    <div className="avatar sm" style={{background:u.role==="superadmin"?"#943535":u.role==="admin"?"var(--accent)":"var(--info)"}}>{u.avatar}</div>
+                    <div><div style={{fontSize:13,fontWeight:500,color:"var(--ink)"}}>{u.name}</div><div style={{fontSize:10.5,color:"var(--ink-muted)"}}>{u.username} · <span style={{textTransform:"capitalize"}}>{u.role.replace("superadmin","Super Admin")}</span></div></div>
+                  </div>
+                  {u.role!=="superadmin"&&<button className="btn btn-danger btn-sm" onClick={()=>removeUser(u.id)}>Remove</button>}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* ABOUT */}
+          {tab==="about"&&(
+            <div>
+              <div className="settings-title">About Flow by Anecdote</div>
+              <div style={{textAlign:"center",padding:"30px 0"}}>
+                <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:40,fontWeight:700,color:"var(--ink)",marginBottom:8}}>Flow <em style={{fontStyle:"italic",color:"var(--accent)"}}>by</em> Anecdote</div>
+                <div style={{fontSize:11,letterSpacing:3,textTransform:"uppercase",color:"var(--ink-muted)",marginBottom:24}}>Agency Management OS</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:24}}>
+                  {[["◈","Dashboard","Client & content overview"],["💬","Team Chat","Internal messaging & meets"],["◐","AI Tools","Captions & assessments"],["⊕","HR Suite","Leaves & attendance"],["✦","Planner","Personal time blocks"],["⚙","Settings","Theme & user management"]].map(([icon,title,desc])=>(
+                    <div key={title} style={{padding:"14px",background:"var(--cream-dark)",borderRadius:10,textAlign:"center"}}>
+                      <div style={{fontSize:20,marginBottom:6}}>{icon}</div>
+                      <div style={{fontSize:12,fontWeight:600,color:"var(--ink)"}}>{title}</div>
+                      <div style={{fontSize:10,color:"var(--ink-muted)",marginTop:2}}>{desc}</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{fontSize:11,color:"var(--ink-muted)"}}>Version 2.0 · Built with ✦ by Anecdote Agency</div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── DASHBOARD ────────────────────────────────────────────────────────────────
+function TodaysTasks({ user, content, setContent, clients }) {
+  const tc=content.filter(c=>c.scheduledDate===todayISO());
+  const canMark=user.role==="executive";
+  return(
+    <div className="card">
+      <div className="flex items-center justify-between mb-16">
+        <h3 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:16,fontWeight:600,color:"var(--ink)"}}>Today's Content</h3>
+        <span className="badge badge-accent">{tc.filter(c=>c.status==="posted").length}/{tc.length} posted</span>
+      </div>
+      {tc.length===0?<p className="text-muted text-sm">Nothing scheduled today.</p>:tc.map(item=>{
+        const client=clients.find(c=>c.id===item.clientId);const isP=item.status==="posted";
+        return(<div key={item.id} className={`today-task-row ${isP?"posted":""}`}>
+          <div className={`task-check ${isP?"checked":""}`} style={{cursor:canMark&&!isP?"pointer":"default"}} onClick={()=>canMark&&!isP&&setContent(p=>p.map(c=>c.id===item.id?{...c,status:"posted",postedAt:nowStr()}:c))}>{isP&&"✓"}</div>
+          <div style={{flex:1}}><div style={{fontSize:12.5,fontWeight:500,textDecoration:isP?"line-through":"none",color:"var(--ink)"}}>{item.title}</div><div className="text-sm text-muted">{client?.name} · {item.scheduledTime}</div></div>
+          {getStatusBadge(item.status)}
+        </div>);
+      })}
+    </div>
+  );
+}
+
+function Dashboard({ user, clients, content, setContent, attendance, dark }) {
+  const myContent=user.role==="executive"?content.filter(c=>c.execId===user.id):content;
+  const pending=content.filter(c=>(user.role==="admin"&&c.status==="pending_admin")||(user.role==="superadmin"&&c.status==="pending_superadmin"));
+  const todayAtt=attendance.filter(a=>a.date===todayISO());
+  return(
+    <div>
+      {/* Dashboard Banner — wave artwork */}
+      <div className="dashboard-mural">
+        <WavesSVG height={160} opacity={0.22} phase={0} />
+        <div className="mural-greeting">Good day,<br /><em>{user.name.split(" ")[0]}.</em></div>
+        <div className="mural-sub">{todayStr()}</div>
+        <div className="mural-stats">
+          <div className="mural-stat"><div className="mural-stat-val">{clients.filter(c=>c.status==="active").length}</div><div className="mural-stat-lbl">Clients</div></div>
+          <div className="mural-stat"><div className="mural-stat-val">{myContent.filter(c=>c.status==="posted").length}</div><div className="mural-stat-lbl">Posted</div></div>
+          {user.role==="superadmin"&&<div className="mural-stat"><div className="mural-stat-val">{todayAtt.length}</div><div className="mural-stat-lbl">Present</div></div>}
+          {(user.role==="admin"||user.role==="superadmin")&&<div className="mural-stat"><div className="mural-stat-val" style={{color:pending.length>0?"#F59E0B":"#4ADE80"}}>{pending.length}</div><div className="mural-stat-lbl">Pending</div></div>}
+        </div>
+      </div>
+      <div className="grid-2">
+        <TodaysTasks user={user} content={content} setContent={setContent} clients={clients} />
+        <div className="card">
+          <h3 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:16,fontWeight:600,marginBottom:13,color:"var(--ink)"}}>Recent Content</h3>
+          {myContent.slice(0,5).map(c=>{const cl=clients.find(x=>x.id===c.clientId);return(
+            <div key={c.id} className="flex items-center justify-between" style={{padding:"8px 0",borderBottom:"1px solid var(--cream-dark)"}}>
+              <div><div style={{fontSize:12.5,fontWeight:500,color:"var(--ink)"}}>{c.title}</div><div className="text-sm text-muted">{cl?.name} · {c.scheduledDate}</div></div>
+              {getStatusBadge(c.status)}
+            </div>);
+          })}
+          {myContent.length===0&&<p className="text-muted text-sm">No content yet.</p>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── CLIENTS ──────────────────────────────────────────────────────────────────
+function Clients({ user, clients, setClients }) {
+  const [showModal,setShowModal]=useState(false);const [editClient,setEditClient]=useState(null);const [viewClient,setViewClient]=useState(null);const [tab,setTab]=useState("active");
+  const filtered=clients.filter(c=>tab==="all"?true:c.status===tab);
+  function saveClient(data){if(editClient)setClients(p=>p.map(c=>c.id===editClient.id?{...c,...data}:c));else setClients(p=>[...p,{...data,id:Date.now(),onboarded:false,socialAccess:{}}]);setShowModal(false);setEditClient(null);}
+  return(
+    <div>
+      <div className="section-header"><div><h1 className="section-title">Clients</h1></div>{user.role!=="executive"&&<button className="btn btn-primary" onClick={()=>{setEditClient(null);setShowModal(true);}}>+ Add Client</button>}</div>
+      <div className="tabs">{[["active","Active"],["enquiry","Pipeline"],["all","All"]].map(([k,l])=><div key={k} className={`tab ${tab===k?"active":""}`} onClick={()=>setTab(k)}>{l}</div>)}</div>
+      <div className="card" style={{padding:0}}>
+        <table className="table">
+          <thead><tr><th>Client</th><th>Services</th><th>Status</th><th>Enquiry</th><th>Onboarded</th><th>Actions</th></tr></thead>
+          <tbody>{filtered.map(c=>(
+            <tr key={c.id}>
+              <td><div style={{fontWeight:500}}>{c.name}</div><div className="text-sm text-muted">{c.contact} · {c.email}</div></td>
+              <td><div className="flex gap-8" style={{flexWrap:"wrap"}}>{c.services.map(s=><span key={s} className="badge badge-accent" style={{fontSize:9}}>{s}</span>)}</div></td>
+              <td>{getStatusBadge(c.status)}</td><td className="text-sm text-muted">{c.enquiryDate}</td>
+              <td>{c.onboarded?<span className="badge badge-success">✓</span>:<span className="badge badge-neutral">No</span>}</td>
+              <td><div className="flex gap-8"><button className="btn btn-ghost btn-sm" onClick={()=>setViewClient(c)}>View</button>{user.role!=="executive"&&<button className="btn btn-ghost btn-sm" onClick={()=>{setEditClient(c);setShowModal(true);}}>Edit</button>}</div></td>
+            </tr>
+          ))}</tbody>
+        </table>
+        {filtered.length===0&&<div className="empty"><p>No clients.</p></div>}
+      </div>
+      {showModal&&<ClientModal initial={editClient} onSave={saveClient} onClose={()=>{setShowModal(false);setEditClient(null);}} />}
+      {viewClient&&<ClientDetailModal client={viewClient} setClients={setClients} user={user} onClose={()=>setViewClient(null)} />}
+    </div>
+  );
+}
+function ClientModal({ initial, onSave, onClose }) {
+  const [form,setForm]=useState({name:initial?.name||"",contact:initial?.contact||"",email:initial?.email||"",phone:initial?.phone||"",services:initial?.services||[],status:initial?.status||"enquiry",enquiryDate:initial?.enquiryDate||todayISO()});
+  const toggle=s=>setForm(p=>({...p,services:p.services.includes(s)?p.services.filter(x=>x!==s):[...p.services,s]}));
+  return(<Modal title={initial?"Edit Client":"Add Client"} onClose={onClose}>
+    <div className="grid-2">
+      <div className="form-group"><label className="form-label">Company</label><input className="form-input" value={form.name} onChange={e=>setForm(p=>({...p,name:e.target.value}))} /></div>
+      <div className="form-group"><label className="form-label">Contact</label><input className="form-input" value={form.contact} onChange={e=>setForm(p=>({...p,contact:e.target.value}))} /></div>
+      <div className="form-group"><label className="form-label">Email</label><input className="form-input" type="email" value={form.email} onChange={e=>setForm(p=>({...p,email:e.target.value}))} /></div>
+      <div className="form-group"><label className="form-label">Phone</label><input className="form-input" value={form.phone} onChange={e=>setForm(p=>({...p,phone:e.target.value}))} /></div>
+    </div>
+    <div className="form-group"><label className="form-label">Status</label><select className="form-input form-select" value={form.status} onChange={e=>setForm(p=>({...p,status:e.target.value}))}><option value="enquiry">Enquiry</option><option value="active">Active</option><option value="closed">Closed</option></select></div>
+    <div className="form-group"><label className="form-label">Services</label><div className="flex gap-8" style={{flexWrap:"wrap",marginTop:4}}>{SERVICES.map(s=><span key={s} onClick={()=>toggle(s)} className={`badge ${form.services.includes(s)?"badge-accent":"badge-neutral"}`} style={{cursor:"pointer",padding:"4px 10px"}}>{s}</span>)}</div></div>
+    <div className="flex gap-12 mt-16"><button className="btn btn-primary" onClick={()=>onSave(form)}>Save</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button></div>
+  </Modal>);
+}
+function ClientDetailModal({ client, setClients, user, onClose }) {
+  const [sa,setSa]=useState(client.socialAccess||{});const [p,setP]=useState("");const [h,setH]=useState("");
+  const [ob,setOb]=useState(client.onboarded);const [dd,setDd]=useState(client.dealDate||"");
+  function save(){setClients(prev=>prev.map(c=>c.id===client.id?{...c,socialAccess:sa,onboarded:ob,dealDate:dd}:c));onClose();}
+  return(<Modal title={client.name} onClose={onClose} lg>
+    <div className="grid-2">
+      <div><p className="form-label">Contact</p><p style={{fontSize:13,color:"var(--ink)"}}>{client.contact}</p><p className="text-sm text-muted">{client.email}</p></div>
+      <div><p className="form-label">Services</p><div className="flex gap-8" style={{flexWrap:"wrap"}}>{client.services.map(s=><span key={s} className="badge badge-accent">{s}</span>)}</div></div>
+    </div>
+    <hr className="divider" />
+    {user.role!=="executive"?(
+      <>
+        <div className="flex items-center gap-12 mb-12"><label style={{fontSize:12.5,fontWeight:500,color:"var(--ink)"}}><input type="checkbox" checked={ob} onChange={e=>setOb(e.target.checked)} style={{marginRight:5}} />Onboarded</label>{ob&&<input className="form-input" type="date" value={dd} onChange={e=>setDd(e.target.value)} style={{width:155}} />}</div>
+        <div className="form-group">
+          <label className="form-label">Social Media Access</label>
+          {Object.entries(sa).map(([k,v])=><div key={k} className="flex items-center justify-between" style={{padding:"6px 10px",background:"var(--cream-dark)",borderRadius:7,marginBottom:5}}><span style={{fontSize:12,color:"var(--ink)"}}><strong>{k}:</strong> {v}</span><button onClick={()=>setSa(prev=>{const n={...prev};delete n[k];return n;})} style={{background:"none",border:"none",cursor:"pointer",color:"var(--danger)"}}>✕</button></div>)}
+          <div className="flex gap-8 mt-8"><input className="form-input" placeholder="Platform" value={p} onChange={e=>setP(e.target.value)} style={{flex:1}} /><input className="form-input" placeholder="Handle" value={h} onChange={e=>setH(e.target.value)} style={{flex:1}} /><button className="btn btn-ghost btn-sm" onClick={()=>{if(p&&h){setSa(prev=>({...prev,[p]:h}));setP("");setH("");}}}>Add</button></div>
+        </div>
+        <div className="flex gap-12 mt-16"><button className="btn btn-primary" onClick={save}>Save</button><button className="btn btn-ghost" onClick={onClose}>Cancel</button></div>
+      </>
+    ):(
+      <div><p className="form-label">Social Access</p>{Object.entries(client.socialAccess||{}).map(([k,v])=><div key={k} style={{fontSize:12.5,marginBottom:3,color:"var(--ink)"}}><strong>{k}:</strong> {v}</div>)}</div>
+    )}
+  </Modal>);
+}
+
+// ─── CONTENT CALENDAR ─────────────────────────────────────────────────────────
+// ─── INDIAN FESTIVALS DATA ────────────────────────────────────────────────────
+const INDIAN_FESTIVALS = {
+  "2025-01-14":{ name:"Makar Sankranti", type:"major", emoji:"🪁", tip:"Kite & harvest vibes — great for lifestyle, food, fashion brands" },
+  "2025-01-23":{ name:"Netaji Jayanti", type:"national", emoji:"🇮🇳", tip:"Patriotic content — ideal for brand values & community posts" },
+  "2025-01-26":{ name:"Republic Day", type:"national", emoji:"🇮🇳", tip:"National pride — use tricolour palette, story reels work well" },
+  "2025-02-02":{ name:"Basant Panchami", type:"major", emoji:"💛", tip:"Yellow theme, spring launch content, education brands" },
+  "2025-02-14":{ name:"Valentine's Day", type:"major", emoji:"❤️", tip:"Love & gifting — jewellery, fashion, F&B brands thrive here" },
+  "2025-02-19":{ name:"Chhatrapati Shivaji Jayanti", type:"regional", emoji:"⚔️", tip:"Maharashtra — strong regional engagement opportunity" },
+  "2025-02-26":{ name:"Maha Shivratri", type:"major", emoji:"🔱", tip:"Spiritual tone, minimalist aesthetic, avoid loud promotions" },
+  "2025-03-13":{ name:"Holi Eve", type:"major", emoji:"🎨", tip:"Pre-Holi teasers — colour-splashed creatives perform best" },
+  "2025-03-14":{ name:"Holi", type:"major", emoji:"🌈", tip:"Biggest colour festival — all brands can celebrate authentically" },
+  "2025-03-30":{ name:"Ram Navami", type:"major", emoji:"🙏", tip:"Devotional tone, avoid hard-sell — community & CSR content" },
+  "2025-03-31":{ name:"Eid ul-Fitr", type:"major", emoji:"🌙", tip:"Celebrate togetherness, gifting, fashion & food content peak" },
+  "2025-04-06":{ name:"Ugadi / Gudi Padwa", type:"regional", emoji:"🌸", tip:"South & West India New Year — fresh start messaging" },
+  "2025-04-10":{ name:"Mahavir Jayanti", type:"national", emoji:"🕊️", tip:"Peace & non-violence themes — CSR & sustainability brands" },
+  "2025-04-14":{ name:"Baisakhi / Ambedkar Jayanti", type:"major", emoji:"🌾", tip:"Harvest + social equality — Punjab & national audience" },
+  "2025-04-18":{ name:"Good Friday", type:"national", emoji:"✝️", tip:"Sombre tone, avoid sales promotions" },
+  "2025-04-20":{ name:"Easter", type:"major", emoji:"🐣", tip:"New beginnings theme, pastel palette, lifestyle brands" },
+  "2025-05-12":{ name:"Mother's Day", type:"major", emoji:"💐", tip:"Emotional storytelling — gifting, fashion, skincare peak" },
+  "2025-05-23":{ name:"Buddha Purnima", type:"national", emoji:"☮️", tip:"Peaceful, mindful content — wellness & spiritual brands" },
+  "2025-06-05":{ name:"World Environment Day", type:"major", emoji:"🌿", tip:"Sustainability content — great for CSR and eco brands" },
+  "2025-06-15":{ name:"Father's Day", type:"major", emoji:"👔", tip:"Gifting & lifestyle content — men's brands, experiences" },
+  "2025-07-04":{ name:"Guru Purnima", type:"major", emoji:"🙏", tip:"Gratitude & mentorship — education, coaching brands" },
+  "2025-08-09":{ name:"Muharram", type:"national", emoji:"🕌", tip:"Respectful tone, avoid promotional content" },
+  "2025-08-15":{ name:"Independence Day", type:"national", emoji:"🇮🇳", tip:"Tricolour palette, freedom & aspiration themes — all brands" },
+  "2025-08-16":{ name:"Onam", type:"regional", emoji:"🌺", tip:"Kerala festival — vibrant, floral aesthetics, food content" },
+  "2025-08-23":{ name:"Raksha Bandhan", type:"major", emoji:"🧵", tip:"Sibling love — gifting, fashion, jewellery brands thrive" },
+  "2025-08-27":{ name:"Janmashtami", type:"major", emoji:"🥛", tip:"Divine & playful tone — food (maakhan/mishri), lifestyle brands" },
+  "2025-09-04":{ name:"Ganesh Chaturthi", type:"major", emoji:"🐘", tip:"Maharashtra & pan-India — joy, community, eco-friendly messaging" },
+  "2025-09-15":{ name:"Engineer's Day", type:"major", emoji:"⚙️", tip:"Tech & innovation brands — quirky behind-the-scenes content" },
+  "2025-10-02":{ name:"Gandhi Jayanti", type:"national", emoji:"🇮🇳", tip:"Truth & simplicity — brand values, minimalist content" },
+  "2025-10-02":{ name:"Navratri Begins", type:"major", emoji:"🎶", tip:"9-day festival — fashion (chaniya choli), dance, colour series" },
+  "2025-10-11":{ name:"Dussehra", type:"major", emoji:"🏹", tip:"Good over evil — bold aspirational messaging, all brands" },
+  "2025-10-20":{ name:"Diwali", type:"major", emoji:"🪔", tip:"Biggest festival — gifting, fashion, home, gold, F&B — all out" },
+  "2025-10-21":{ name:"Govardhan Puja", type:"major", emoji:"🌿", tip:"Post-Diwali — food & nature brands, gratitude content" },
+  "2025-10-22":{ name:"Bhai Dooj", type:"major", emoji:"🎁", tip:"Sibling gifting — great for e-commerce & gifting brands" },
+  "2025-11-01":{ name:"Chhath Puja", type:"regional", emoji:"🌅", tip:"UP, Bihar, Jharkhand — sunrise/sunset visuals, devotional" },
+  "2025-11-05":{ name:"Guru Nanak Jayanti", type:"national", emoji:"🙏", tip:"Seva & humility — CSR, community initiatives content" },
+  "2025-11-14":{ name:"Children's Day", type:"major", emoji:"🎈", tip:"Fun & nostalgia — education, toys, family brands" },
+  "2025-12-19":{ name:"Goa Liberation Day", type:"regional", emoji:"🏖️", tip:"Regional pride — travel & hospitality brands" },
+  "2025-12-25":{ name:"Christmas", type:"major", emoji:"🎄", tip:"Gifting, joy, year-end — all brands, warm palette" },
+  "2025-12-31":{ name:"New Year's Eve", type:"major", emoji:"🎆", tip:"Year in review, resolutions — all brands celebrate" },
+  "2026-01-01":{ name:"New Year", type:"major", emoji:"🎊", tip:"Fresh start — new collections, brand refresh content" },
+  "2026-01-14":{ name:"Makar Sankranti", type:"major", emoji:"🪁", tip:"Kite & harvest vibes — lifestyle, food, fashion brands" },
+  "2026-01-26":{ name:"Republic Day", type:"national", emoji:"🇮🇳", tip:"National pride — tricolour palette, community posts" },
+  "2026-02-17":{ name:"Maha Shivratri", type:"major", emoji:"🔱", tip:"Spiritual tone, minimalist aesthetic" },
+  "2026-02-14":{ name:"Valentine's Day", type:"major", emoji:"❤️", tip:"Love & gifting — jewellery, fashion, F&B brands" },
+  "2026-03-02":{ name:"Holi", type:"major", emoji:"🌈", tip:"Biggest colour festival — all brands celebrate" },
+  "2026-03-20":{ name:"Ram Navami", type:"major", emoji:"🙏", tip:"Devotional tone, avoid hard-sell" },
+  "2026-03-20":{ name:"Eid ul-Fitr", type:"major", emoji:"🌙", tip:"Togetherness, gifting, fashion & food" },
+  "2026-04-14":{ name:"Baisakhi / Ambedkar Jayanti", type:"major", emoji:"🌾", tip:"Harvest + social equality" },
+  "2026-05-11":{ name:"Mother's Day", type:"major", emoji:"💐", tip:"Emotional storytelling — gifting, fashion, skincare" },
+  "2026-08-15":{ name:"Independence Day", type:"national", emoji:"🇮🇳", tip:"Tricolour palette, freedom & aspiration" },
+  "2026-09-12":{ name:"Ganesh Chaturthi", type:"major", emoji:"🐘", tip:"Joy, community, eco-friendly messaging" },
+  "2026-10-02":{ name:"Gandhi Jayanti", type:"national", emoji:"🇮🇳", tip:"Truth & simplicity — brand values content" },
+  "2026-10-08":{ name:"Dussehra", type:"major", emoji:"🏹", tip:"Good over evil — bold aspirational messaging" },
+  "2026-11-08":{ name:"Diwali", type:"major", emoji:"🪔", tip:"Biggest festival — gifting, fashion, home, gold" },
+  "2026-12-25":{ name:"Christmas", type:"major", emoji:"🎄", tip:"Gifting, joy, year-end — all brands" },
+  "2026-12-31":{ name:"New Year's Eve", type:"major", emoji:"🎆", tip:"Year in review, resolutions — all brands" },
+};
+
+function getFestivalsForMonth(year, month) {
+  const result = {};
+  Object.entries(INDIAN_FESTIVALS).forEach(([date, fest]) => {
+    const d = new Date(date);
+    if (d.getFullYear() === year && d.getMonth() === month) {
+      const day = d.getDate();
+      if (!result[day]) result[day] = [];
+      result[day].push({ ...fest, date });
+    }
+  });
+  return result;
+}
+
+function getUpcomingFestivals(year, month, count=8) {
+  const from = new Date(year, month, 1);
+  const to = new Date(year, month+2, 0); // 2 months ahead
+  return Object.entries(INDIAN_FESTIVALS)
+    .filter(([d]) => { const dt=new Date(d); return dt>=from && dt<=to; })
+    .sort(([a],[b]) => new Date(a)-new Date(b))
+    .slice(0, count);
+}
+
+// ─── CONTENT CALENDAR ─────────────────────────────────────────────────────────
+function ContentCalendar({ user, clients, calendar, setCalendar, users }) {
+  const now = new Date();
+  const [calView, setCalView] = useState({ year: now.getFullYear(), month: now.getMonth() });
+  const [selDay, setSelDay] = useState(null);
+  const [showModal, setShowModal] = useState(false);
+  const [editCal, setEditCal] = useState(null);
+  const [selFestival, setSelFestival] = useState(null);
+  const [form, setForm] = useState({ clientId:"", posts:[""] });
+
+  const { year, month } = calView;
+  const firstDow = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month+1, 0).getDate();
+  const daysInPrev = new Date(year, month, 0).getDate();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-${String(now.getDate()).padStart(2,"0")}`;
+  const monthFestivals = getFestivalsForMonth(year, month);
+  const upcomingFests = getUpcomingFestivals(year, month);
+  const getUserById = id => users.find(u => u.id === id);
+
+  function dateStr(day) {
+    return `${year}-${String(month+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+  }
+
+  function postsOnDay(dayStr) {
+    return calendar.filter(c => {
+      if (!c.dates) return false;
+      return c.dates.includes(dayStr);
+    });
+  }
+
+  function openNewWithDay(day) {
+    const ds = dateStr(day);
+    setForm({ clientId:"", posts:[""], prefillDate: ds });
+    setSelDay(day);
+    setShowModal(true);
+  }
+
+  function saveCalendar() {
+    if (!form.clientId) return;
+    const entry = {
+      id: Date.now(),
+      clientId: parseInt(form.clientId),
+      month: `${MONTH_NAMES[month]} ${year}`,
+      posts: form.posts.filter(Boolean),
+      dates: form.posts.filter(Boolean).map((_,i) => {
+        const base = form.prefillDate ? new Date(form.prefillDate) : new Date(year, month, 1);
+        base.setDate(base.getDate() + i * 3);
+        return `${base.getFullYear()}-${String(base.getMonth()+1).padStart(2,"0")}-${String(base.getDate()).padStart(2,"0")}`;
+      }),
+      status: user.role==="executive" ? "pending" : "approved",
+      createdBy: user.id,
+      approvedBy: null,
+    };
+    setCalendar(prev => [...prev, entry]);
+    setShowModal(false);
+    setForm({ clientId:"", posts:[""] });
+  }
+
+  function updateStatus(id, s) {
+    setCalendar(prev => prev.map(c => c.id===id ? {...c, status:s, approvedBy:user.id} : c));
+  }
+
+  // Build grid cells: prev-month overflow + current + next-month overflow
+  const cells = [];
+  for (let i = firstDow-1; i >= 0; i--) cells.push({ day: daysInPrev-i, cur: false });
+  for (let d = 1; d <= daysInMonth; d++) cells.push({ day: d, cur: true });
+  const remaining = 42 - cells.length;
+  for (let d = 1; d <= remaining; d++) cells.push({ day: d, cur: false });
+
+  const selDayStr = selDay ? dateStr(selDay) : null;
+  const selDayFests = selDay ? (monthFestivals[selDay] || []) : [];
+  const selDayPosts = selDayStr ? postsOnDay(selDayStr) : [];
+
+  return (
+    <div>
+      <div className="section-header">
+        <div>
+          <h1 className="section-title">Content Calendar</h1>
+          <p className="section-sub">Plan content around Indian festivals & occasions</p>
+        </div>
+        <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ New Plan</button>
+      </div>
+
+      <div className="cc-wrap">
+        {/* ── LEFT: Full Calendar Grid ── */}
+        <div className="cc-main">
+          {/* Header */}
+          <div className="cc-header">
+            <button className="cc-nav" onClick={() => setCalView(p => p.month===0?{year:p.year-1,month:11}:{...p,month:p.month-1})}>‹</button>
+            <div style={{textAlign:"center"}}>
+              <div className="cc-month-title">{MONTH_NAMES[month]} {year}</div>
+              <div style={{fontSize:10,color:"var(--ink-muted)",letterSpacing:1,marginTop:2}}>
+                {Object.keys(monthFestivals).length} festivals this month
+              </div>
+            </div>
+            <button className="cc-nav" onClick={() => setCalView(p => p.month===11?{year:p.year+1,month:0}:{...p,month:p.month+1})}>›</button>
+          </div>
+
+          {/* Legend */}
+          <div className="cc-legend" style={{padding:"8px 16px 0",borderBottom:"1px solid var(--border)"}}>
+            {[["#E8553A","Major Festival"],["#8B4BAE","Regional"],["#2D47A3","National Holiday"],["#C4954A","Planned Content"]].map(([c,l])=>(
+              <div key={l} className="cc-legend-item">
+                <div className="cc-legend-dot" style={{background:c}} />
+                <span>{l}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Day-of-week header */}
+          <div className="cc-dow-row">
+            {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d=><div key={d} className="cc-dow">{d}</div>)}
+          </div>
+
+          {/* Calendar Grid */}
+          <div className="cc-grid">
+            {cells.map((cell, i) => {
+              const ds = cell.cur ? dateStr(cell.day) : null;
+              const fests = cell.cur ? (monthFestivals[cell.day] || []) : [];
+              const posts = ds ? postsOnDay(ds) : [];
+              const isToday = ds === todayStr;
+              const isSel = cell.cur && selDay === cell.day;
+              return (
+                <div
+                  key={i}
+                  className={`cc-cell ${!cell.cur?"other-month":""} ${isToday?"today":""} ${isSel?"selected":""}`}
+                  onClick={() => cell.cur && setSelDay(selDay===cell.day ? null : cell.day)}
+                  onDoubleClick={() => cell.cur && openNewWithDay(cell.day)}
+                >
+                  <div className="cc-daynum">{cell.day}</div>
+                  {fests.slice(0,2).map((f,fi) => (
+                    <span
+                      key={fi}
+                      className={`cc-festival ${f.type}`}
+                      title={f.tip}
+                      onClick={e=>{e.stopPropagation();setSelFestival(f);}}
+                    >
+                      {f.emoji} {f.name}
+                    </span>
+                  ))}
+                  {posts.length > 0 && (
+                    <div style={{marginTop:2}}>
+                      {posts.slice(0,2).map((p,pi) => {
+                        const cl = clients.find(c=>c.id===p.clientId);
+                        return <span key={pi} className="cc-post-chip">◈ {cl?.name||"Post"}</span>;
+                      })}
+                    </div>
+                  )}
+                  {(fests.length > 2 || posts.length > 2) && (
+                    <span style={{fontSize:8,color:"var(--ink-muted)"}}>+{fests.length+posts.length-2} more</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* ── RIGHT: Sidebar ── */}
+        <div className="cc-sidebar">
+
+          {/* Selected Day Panel */}
+          {selDay && (
+            <div className="cc-day-panel">
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+                <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:17,fontWeight:600,color:"var(--ink)"}}>
+                  {selDay} {MONTH_NAMES[month]}
+                </div>
+                <button className="btn btn-accent btn-sm" onClick={() => openNewWithDay(selDay)}>+ Plan</button>
+              </div>
+
+              {selDayFests.length > 0 && (
+                <div style={{marginBottom:12}}>
+                  <p style={{fontSize:9.5,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:"var(--ink-muted)",marginBottom:7}}>Festivals</p>
+                  {selDayFests.map((f,i) => (
+                    <div key={i} style={{background:"var(--cream-dark)",borderRadius:8,padding:"9px 11px",marginBottom:7}}>
+                      <div style={{fontWeight:600,fontSize:12.5,color:"var(--ink)"}}>{f.emoji} {f.name}</div>
+                      <div style={{fontSize:10.5,color:"var(--ink-muted)",marginTop:3,lineHeight:1.5}}>{f.tip}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {selDayPosts.length > 0 && (
+                <div>
+                  <p style={{fontSize:9.5,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:"var(--ink-muted)",marginBottom:7}}>Planned Content</p>
+                  {selDayPosts.map((p,i) => {
+                    const cl = clients.find(c=>c.id===p.clientId);
+                    return (
+                      <div key={i} style={{background:"var(--accent-pale)",borderRadius:8,padding:"9px 11px",marginBottom:7,borderLeft:"3px solid var(--accent)"}}>
+                        <div style={{fontWeight:600,fontSize:12,color:"var(--ink)"}}>{cl?.name}</div>
+                        {p.posts.slice(0,3).map((post,pi)=><div key={pi} style={{fontSize:11,color:"var(--ink-muted)",marginTop:2}}>· {post}</div>)}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {selDayFests.length===0 && selDayPosts.length===0 && (
+                <p style={{fontSize:12,color:"var(--ink-muted)"}}>No festivals or plans. Double-click the date to add content.</p>
+              )}
+            </div>
+          )}
+
+          {/* Upcoming Festivals */}
+          <div className="cc-side-card">
+            <div className="cc-side-title">✦ Coming Up</div>
+            <p style={{fontSize:10,color:"var(--ink-muted)",marginBottom:11}}>Festivals in the next 60 days</p>
+            {upcomingFests.map(([date, f]) => {
+              const d = new Date(date);
+              const daysLeft = Math.ceil((d - new Date()) / 86400000);
+              return (
+                <div key={date} style={{display:"flex",alignItems:"flex-start",gap:10,marginBottom:12,paddingBottom:12,borderBottom:"1px solid var(--cream-dark)"}}>
+                  <div style={{
+                    background: f.type==="major"?"rgba(232,85,58,0.1)":f.type==="national"?"rgba(45,71,163,0.1)":"rgba(139,75,174,0.1)",
+                    borderRadius:8,padding:"6px 9px",textAlign:"center",flexShrink:0,minWidth:42
+                  }}>
+                    <div style={{fontSize:16}}>{f.emoji}</div>
+                    <div style={{fontSize:8,fontWeight:700,color:"var(--ink-muted)",marginTop:1}}>
+                      {d.getDate()} {MONTH_NAMES[d.getMonth()].slice(0,3)}
+                    </div>
+                  </div>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:600,fontSize:12,color:"var(--ink)"}}>{f.name}</div>
+                    <div style={{fontSize:10,color:"var(--ink-muted)",marginTop:2,lineHeight:1.4}}>{f.tip}</div>
+                    <div style={{fontSize:9,marginTop:4,fontWeight:600,color:daysLeft<=7?"#E8553A":daysLeft<=14?"#C4954A":"var(--ink-muted)"}}>
+                      {daysLeft<=0?"Today":daysLeft===1?"Tomorrow":`${daysLeft} days away`}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+            {upcomingFests.length===0 && <p style={{fontSize:12,color:"var(--ink-muted)"}}>No festivals in the next 60 days.</p>}
+          </div>
+
+          {/* Existing Plans Summary */}
+          {calendar.length > 0 && (
+            <div className="cc-side-card">
+              <div className="cc-side-title">Plans — {MONTH_NAMES[month]}</div>
+              {calendar
+                .filter(c => c.month === `${MONTH_NAMES[month]} ${year}`)
+                .map(c => {
+                  const cl = clients.find(x => x.id===c.clientId);
+                  return (
+                    <div key={c.id} style={{marginBottom:10,paddingBottom:10,borderBottom:"1px solid var(--cream-dark)"}}>
+                      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                        <div style={{fontWeight:600,fontSize:12,color:"var(--ink)"}}>{cl?.name}</div>
+                        <div style={{display:"flex",alignItems:"center",gap:6}}>
+                          {getStatusBadge(c.status)}
+                          {(user.role==="admin"||user.role==="superadmin")&&c.status==="pending"&&(
+                            <div style={{display:"flex",gap:4}}>
+                              <button className="btn btn-success btn-sm" style={{padding:"2px 7px"}} onClick={()=>updateStatus(c.id,"approved")}>✓</button>
+                              <button className="btn btn-danger btn-sm" style={{padding:"2px 7px"}} onClick={()=>updateStatus(c.id,"rejected")}>✕</button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <div style={{fontSize:10,color:"var(--ink-muted)",marginTop:3}}>{c.posts.length} posts · By {getUserById(c.createdBy)?.name}</div>
+                    </div>
+                  );
+                })}
+              {calendar.filter(c=>c.month===`${MONTH_NAMES[month]} ${year}`).length===0 && (
+                <p style={{fontSize:12,color:"var(--ink-muted)"}}>No plans for this month yet.</p>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Festival tip modal */}
+      {selFestival && (
+        <div className="modal-overlay" onClick={()=>setSelFestival(null)}>
+          <div className="modal" style={{maxWidth:400}} onClick={e=>e.stopPropagation()}>
+            <div style={{textAlign:"center",marginBottom:16}}>
+              <div style={{fontSize:48,marginBottom:8}}>{selFestival.emoji}</div>
+              <h3 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:22,fontWeight:700,color:"var(--ink)"}}>{selFestival.name}</h3>
+              <span className={`festival-tag ${selFestival.type}`} style={{margin:"8px auto",display:"inline-flex"}}>
+                {selFestival.type==="major"?"⭐ Major Festival":selFestival.type==="national"?"🇮🇳 National Holiday":"📍 Regional Festival"}
+              </span>
+            </div>
+            <div style={{background:"var(--cream-dark)",borderRadius:10,padding:"14px 16px",marginBottom:16}}>
+              <p style={{fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:"var(--ink-muted)",marginBottom:6}}>Content Strategy Tip</p>
+              <p style={{fontSize:13,lineHeight:1.6,color:"var(--ink)"}}>{selFestival.tip}</p>
+            </div>
+            <button className="btn btn-primary w-full" style={{justifyContent:"center"}} onClick={()=>{setSelFestival(null);setShowModal(true);}}>
+              + Plan Content for This Day
+            </button>
+            <button className="btn btn-ghost w-full" style={{justifyContent:"center",marginTop:8}} onClick={()=>setSelFestival(null)}>Close</button>
+          </div>
+        </div>
+      )}
+
+      {/* New Plan Modal */}
+      {showModal && (
+        <Modal title="Plan Content" onClose={()=>{setShowModal(false);setForm({clientId:"",posts:[""]});}} lg>
+          <div className="form-group">
+            <label className="form-label">Client</label>
+            <select className="form-input form-select" value={form.clientId} onChange={e=>setForm(p=>({...p,clientId:e.target.value}))}>
+              <option value="">Select client…</option>
+              {clients.filter(c=>c.status==="active").map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+
+          {/* Festival suggestions for this month */}
+          {Object.entries(monthFestivals).length > 0 && (
+            <div className="form-group">
+              <label className="form-label">✦ Festival Suggestions — {MONTH_NAMES[month]}</label>
+              <div style={{background:"var(--cream-dark)",borderRadius:8,padding:"10px 12px"}}>
+                <p style={{fontSize:10.5,color:"var(--ink-muted)",marginBottom:8}}>Click to add as a post idea</p>
+                <div style={{display:"flex",flexWrap:"wrap"}}>
+                  {Object.entries(monthFestivals).map(([day,fests])=>fests.map((f,i)=>(
+                    <span
+                      key={`${day}-${i}`}
+                      className={`festival-tag ${f.type}`}
+                      onClick={()=>setForm(p=>({...p,posts:[...p.posts.filter(Boolean),`${f.emoji} ${f.name} (${day} ${MONTH_NAMES[month]})`]}))}
+                    >
+                      {f.emoji} {f.name} · {day}
+                    </span>
+                  )))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="form-group">
+            <label className="form-label">Post Ideas</label>
+            {form.posts.map((pp,i)=>(
+              <div key={i} className="flex gap-8" style={{marginBottom:6}}>
+                <input
+                  className="form-input"
+                  placeholder={`Post ${i+1} — e.g. Diwali gifting reel`}
+                  value={pp}
+                  onChange={e=>{const posts=[...form.posts];posts[i]=e.target.value;setForm(p=>({...p,posts}));}}
+                  style={{flex:1}}
+                />
+                {form.posts.length>1 && (
+                  <button className="btn btn-ghost btn-sm" onClick={()=>setForm(p=>({...p,posts:p.posts.filter((_,j)=>j!==i)}))}>✕</button>
+                )}
+              </div>
+            ))}
+            <button className="btn btn-ghost btn-sm mt-8" onClick={()=>setForm(p=>({...p,posts:[...p.posts,""]}))}>+ Add Post</button>
+          </div>
+
+          <div className="flex gap-12 mt-16">
+            <button className="btn btn-primary" onClick={saveCalendar} disabled={!form.clientId}>Save Plan</button>
+            <button className="btn btn-ghost" onClick={()=>{setShowModal(false);setForm({clientId:"",posts:[""]});}}>Cancel</button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ─── CONTENT ──────────────────────────────────────────────────────────────────
+function Content({ user, clients, content, setContent, users }) {
+  const [showModal,setShowModal]=useState(false);const [editItem,setEditItem]=useState(null);const [tab,setTab]=useState("all");
+  const myContent=user.role==="executive"?content.filter(c=>c.execId===user.id):content;
+  const filtered=tab==="all"?myContent:myContent.filter(c=>c.status===tab);
+  const getUserById=id=>users.find(u=>u.id===id);
+  return(<div>
+    <div className="section-header"><div><h1 className="section-title">Content</h1></div>{user.role==="executive"&&<button className="btn btn-primary" onClick={()=>{setEditItem(null);setShowModal(true);}}>+ New</button>}</div>
+    <div className="tabs">{[["all","All"],["draft","Draft"],["pending_admin","Pending Admin"],["pending_superadmin","Pending SA"],["approved_client","Approved"],["posted","Posted"]].map(([k,l])=><div key={k} className={`tab ${tab===k?"active":""}`} onClick={()=>setTab(k)}>{l}</div>)}</div>
+    <div style={{display:"grid",gap:12}}>
+      {filtered.map(item=>{
+        const client=clients.find(c=>c.id===item.clientId);const exec=getUserById(item.execId);
+        const order=["draft","pending_admin","pending_superadmin","approved_client","posted"];const cur=order.indexOf(item.status);
+        return(<div key={item.id} className="card">
+          <div className="flex items-center justify-between mb-12">
+            <div><h3 style={{fontSize:14.5,fontWeight:600,color:"var(--ink)"}}>{item.title}</h3><p className="text-sm text-muted">{client?.name} · {item.scheduledDate} {item.scheduledTime}</p></div>
+            <div className="flex items-center gap-12">{getStatusBadge(item.status)}<button className="btn btn-ghost btn-sm" onClick={()=>{setEditItem(item);setShowModal(true);}}>{user.role==="executive"&&item.status==="draft"?"Edit":"View"}</button></div>
+          </div>
+          <div className="flex items-center gap-4 mb-12">
+            {[["draft","Draft"],["pending_admin","Admin"],["pending_superadmin","SA"],["approved_client","Client"],["posted","Posted"]].map((st,i,arr)=>{
+              const si=order.indexOf(st[0]);const cls=si<cur?"stage-done":si===cur?"stage-active":"stage-pending";
+              return(<div key={st[0]} className="flex items-center" style={{flex:i<arr.length-1?1:"none"}}>
+                <div><div className={`stage-dot ${cls}`}>{si<cur?"✓":i+1}</div><div style={{fontSize:8.5,marginTop:2,textAlign:"center",color:"var(--ink-muted)"}}>{st[1]}</div></div>
+                {i<arr.length-1&&<div className="stage-line" style={{background:si<cur?"var(--success)":"var(--cream-dark)"}} />}
+              </div>);
+            })}
+          </div>
+          {item.mediaDataUrl&&<div style={{marginBottom:9}}><MediaDisplay item={item} /></div>}
+          {(item.adminCaption||item.execCaption)&&<div style={{background:"var(--cream-dark)",borderRadius:8,padding:"8px 11px"}}><p style={{fontSize:9.5,fontWeight:700,textTransform:"uppercase",color:"var(--ink-muted)",marginBottom:3}}>{item.adminCaption?"Final Caption":"Submitted Caption"}</p><p style={{fontSize:12.5,lineHeight:1.6,color:"var(--ink)"}}>{item.adminCaption||item.execCaption}</p></div>}
+          <div className="flex items-center gap-8 mt-8"><div className="avatar sm">{exec?.avatar}</div><span className="text-sm text-muted">By {exec?.name}</span></div>
+        </div>);
+      })}
+    </div>
+    {filtered.length===0&&<div className="empty"><div className="empty-icon">◫</div><h4>No Content Found</h4></div>}
+    {showModal&&<ContentModal user={user} clients={clients} initial={editItem} onSave={data=>{if(editItem)setContent(prev=>prev.map(c=>c.id===editItem.id?{...c,...data}:c));else setContent(prev=>[...prev,{...data,id:Date.now(),execId:user.id,createdAt:todayISO(),adminComment:"",adminCaption:"",postedAt:null}]);setShowModal(false);setEditItem(null);}} onClose={()=>{setShowModal(false);setEditItem(null);}} />}
+  </div>);
+}
+
+function ContentModal({ user, clients, initial, onSave, onClose }) {
+  const isApprover=user.role==="admin"||user.role==="superadmin";
+  const isExecEdit=user.role==="executive"&&(!initial||initial.status==="draft");
+  const [form,setForm]=useState({clientId:initial?.clientId||"",title:initial?.title||"",scheduledDate:initial?.scheduledDate||"",scheduledTime:initial?.scheduledTime||"10:00",execCaption:initial?.execCaption||"",adminCaption:initial?.adminCaption||"",adminComment:initial?.adminComment||"",status:initial?.status||"draft",mediaType:initial?.mediaType||null,mediaName:initial?.mediaName||null,mediaDataUrl:initial?.mediaDataUrl||null});
+  const [gen,setGen]=useState(false);const [desc,setDesc]=useState("");const [lb,setLb]=useState(false);const fileRef=useRef();
+  const client=clients.find(c=>c.id===parseInt(form.clientId));
+  async function genCaption(){if(!desc.trim()){alert("Describe the media first.");return;}setGen(true);const cap=await generateCaption(desc,client?.name||"brand",client?.services?.[0]||"social media");setForm(p=>({...p,execCaption:cap}));setGen(false);}
+  function handleFile(e){const file=e.target.files[0];if(!file)return;const type=file.type.startsWith("video")?"video":"image";const reader=new FileReader();reader.onload=ev=>setForm(p=>({...p,mediaType:type,mediaName:file.name,mediaDataUrl:ev.target.result}));reader.readAsDataURL(file);}
+  return(<Modal title={initial?(isApprover?"Review Content":"Edit Content"):"New Content"} onClose={onClose} lg>
+    <div className="grid-2">
+      <div className="form-group"><label className="form-label">Client</label>{!isExecEdit?<p style={{fontSize:13,color:"var(--ink)"}}>{client?.name}</p>:<select className="form-input form-select" value={form.clientId} onChange={e=>setForm(p=>({...p,clientId:e.target.value}))}><option value="">Select…</option>{clients.filter(c=>c.status==="active").map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>}</div>
+      <div className="form-group"><label className="form-label">Title</label>{!isExecEdit?<p style={{fontSize:13,color:"var(--ink)"}}>{form.title}</p>:<input className="form-input" value={form.title} onChange={e=>setForm(p=>({...p,title:e.target.value}))} />}</div>
+      <div className="form-group"><label className="form-label">Date</label>{!isExecEdit?<p style={{fontSize:13,color:"var(--ink)"}}>{form.scheduledDate}</p>:<input className="form-input" type="date" value={form.scheduledDate} onChange={e=>setForm(p=>({...p,scheduledDate:e.target.value}))} />}</div>
+      <div className="form-group"><label className="form-label">Time</label>{!isExecEdit?<p style={{fontSize:13,color:"var(--ink)"}}>{form.scheduledTime}</p>:<input className="form-input" type="time" value={form.scheduledTime} onChange={e=>setForm(p=>({...p,scheduledTime:e.target.value}))} />}</div>
+    </div>
+    <div className="form-group"><label className="form-label">Media</label>
+      {form.mediaDataUrl?(
+        <div>{form.mediaType==="video"?<video src={form.mediaDataUrl} className="media-preview-thumb" onClick={()=>setLb(true)} style={{maxHeight:200}} />:<img src={form.mediaDataUrl} className="media-preview-thumb" style={{maxHeight:200}} alt="" onClick={()=>setLb(true)} />}
+          <div className="flex gap-8 mt-8"><button className="btn btn-ghost btn-sm" onClick={()=>setLb(true)}>🔍 Full Size</button>{isExecEdit&&<button className="btn btn-danger btn-sm" onClick={()=>setForm(p=>({...p,mediaDataUrl:null,mediaName:null,mediaType:null}))}>Remove</button>}</div>
+          {lb&&<MediaLightbox src={form.mediaDataUrl} type={form.mediaType} onClose={()=>setLb(false)} />}
+        </div>
+      ):isExecEdit?(<div className="upload-zone" onClick={()=>fileRef.current?.click()}><div style={{fontSize:24,marginBottom:6}}>📎</div><p style={{color:"var(--ink-muted)"}}>Upload JPG, PNG or MP4</p><input ref={fileRef} type="file" accept="image/*,video/mp4" style={{display:"none"}} onChange={handleFile} /></div>):<p className="text-muted text-sm">No media.</p>}
+    </div>
+    <div className="form-group">
+      <div className="flex items-center gap-8 mb-8"><label className="form-label" style={{margin:0}}>Caption</label><span className="ai-badge">✦ AI</span></div>
+      {isExecEdit&&<div className="flex gap-8 mb-8"><input className="form-input" placeholder="Describe media for AI caption…" value={desc} onChange={e=>setDesc(e.target.value)} style={{flex:1}} /><button className="btn btn-accent btn-sm" onClick={genCaption} disabled={gen}>{gen?<span className="generating">Generating…</span>:"✦ Generate"}</button></div>}
+      {!isApprover&&(isExecEdit?<textarea className="form-input form-textarea" value={form.execCaption} onChange={e=>setForm(p=>({...p,execCaption:e.target.value}))} />:<div style={{padding:"8px 11px",background:"var(--cream-dark)",borderRadius:8,fontSize:12.5,lineHeight:1.6,color:"var(--ink)"}}>{form.execCaption||"—"}</div>)}
+      {isApprover&&(<><div style={{marginBottom:9,padding:"8px 11px",background:"var(--cream-dark)",borderRadius:8}}><p className="form-label" style={{marginBottom:3}}>Executive's Caption</p><p style={{fontSize:12.5,lineHeight:1.6,color:"var(--ink)"}}>{form.execCaption||"—"}</p></div><label className="form-label">Revised Caption</label><textarea className="form-input form-textarea" value={form.adminCaption} onChange={e=>setForm(p=>({...p,adminCaption:e.target.value}))} /><label className="form-label mt-8">Comment</label><textarea className="form-input form-textarea" value={form.adminComment} onChange={e=>setForm(p=>({...p,adminComment:e.target.value}))} style={{minHeight:52}} /></>)}
+    </div>
+    <div className="flex gap-8">
+      {isExecEdit&&<><button className="btn btn-ghost" onClick={()=>onSave({...form,status:"draft"})}>Draft</button><button className="btn btn-primary" onClick={()=>onSave({...form,status:"pending_admin"})}>Submit</button></>}
+      {user.role==="admin"&&initial?.status==="pending_admin"&&<><button className="btn btn-success" onClick={()=>onSave({...form,status:"pending_superadmin"})}>✓ → SA</button><button className="btn btn-danger" onClick={()=>onSave({...form,status:"rejected"})}>✕</button></>}
+      {user.role==="superadmin"&&initial?.status==="pending_superadmin"&&<><button className="btn btn-success" onClick={()=>onSave({...form,status:"approved_client"})}>✓ → Client</button><button className="btn btn-danger" onClick={()=>onSave({...form,status:"rejected"})}>✕</button></>}
+      {user.role==="superadmin"&&initial?.status==="approved_client"&&<button className="btn btn-accent" onClick={()=>onSave({...form,status:"posted",postedAt:nowStr()})}>Mark Posted</button>}
+      <button className="btn btn-ghost" onClick={onClose}>Close</button>
+    </div>
+  </Modal>);
+}
+
+// ─── APPROVALS ────────────────────────────────────────────────────────────────
+function Approvals({ user, clients, content, setContent, users }) {
+  const pending=content.filter(c=>(user.role==="admin"&&c.status==="pending_admin")||(user.role==="superadmin"&&(c.status==="pending_superadmin"||c.status==="pending_admin")));
+  const [sel,setSel]=useState(null);
+  const getUserById=id=>users.find(u=>u.id===id);
+  return(<div>
+    <div className="section-header"><div><h1 className="section-title">Approvals</h1><p className="section-sub">{pending.length} pending</p></div></div>
+    {pending.length===0?<div className="empty"><div className="empty-icon">✓</div><h4>All Clear!</h4></div>:pending.map(item=>{
+      const client=clients.find(c=>c.id===item.clientId);const exec=getUserById(item.execId);
+      return(<div key={item.id} className="card" style={{marginBottom:12}}>
+        <div className="flex items-center justify-between"><div><h3 style={{fontSize:14.5,fontWeight:600,color:"var(--ink)"}}>{item.title}</h3><p className="text-sm text-muted">{client?.name} · By {exec?.name} · {item.scheduledDate}</p></div><div className="flex items-center gap-12">{getStatusBadge(item.status)}<button className="btn btn-primary btn-sm" onClick={()=>setSel(item)}>Review →</button></div></div>
+        {item.mediaDataUrl&&<div style={{marginTop:9}}><MediaDisplay item={item} /></div>}
+        <div style={{marginTop:8,padding:"8px 11px",background:"var(--cream-dark)",borderRadius:8,fontSize:12.5,lineHeight:1.6,color:"var(--ink)"}}><strong>Caption:</strong> {item.execCaption||"—"}</div>
+      </div>);
+    })}
+    {sel&&<ContentModal user={user} clients={clients} initial={sel} onSave={data=>{setContent(prev=>prev.map(c=>c.id===sel.id?{...c,...data}:c));setSel(null);}} onClose={()=>setSel(null)} />}
+  </div>);
+}
+
+// ─── PUNCH ────────────────────────────────────────────────────────────────────
+function PunchPage({ user, attendance, setAttendance }) {
+  const [clock,setClock]=useState(nowStr());const [punchedIn,setPunchedIn]=useState(false);const [loginTime,setLoginTime]=useState(null);
+  useEffect(()=>{
+    const iv=setInterval(()=>setClock(nowStr()),1000);
+    const r=attendance.find(a=>a.userId===user.id&&a.date===todayISO());
+    if(r){setPunchedIn(!r.logout);setLoginTime(r.login);}
+    return()=>clearInterval(iv);
+  },[attendance,user.id]);
+  function punchIn(){const t=nowStr();setAttendance(prev=>[...prev,{userId:user.id,date:todayISO(),login:t,logout:null}]);setPunchedIn(true);setLoginTime(t);}
+  function punchOut(){const t=nowStr();setAttendance(prev=>prev.map(a=>a.userId===user.id&&a.date===todayISO()&&!a.logout?{...a,logout:t}:a));setPunchedIn(false);}
+  const myRec=attendance.filter(a=>a.userId===user.id).slice(-7).reverse();
+  const todayRec=attendance.find(a=>a.userId===user.id&&a.date===todayISO());
+  return(<div>
+    <div className="section-header"><h1 className="section-title">Attendance</h1></div>
+    <div className="grid-2">
+      <div><div className="punch-display">
+        <div className="punch-date">{todayStr()}</div><div className="punch-time">{clock}</div>
+        <div style={{fontSize:12,color:"rgba(255,255,255,0.4)",marginBottom:20}}>{punchedIn?`✓ In at ${loginTime}`:"Not logged in"}</div>
+        {!punchedIn&&!todayRec?<button className="btn btn-accent" style={{width:"100%",justifyContent:"center",padding:"11px"}} onClick={punchIn}>⏱ Punch In</button>
+          :punchedIn?<button className="btn btn-danger" style={{width:"100%",justifyContent:"center",padding:"11px"}} onClick={punchOut}>⏹ Punch Out</button>
+          :<div style={{background:"rgba(62,125,82,0.2)",borderRadius:9,padding:"10px",fontSize:12.5,color:"#90D4A5"}}>✓ Done — {todayRec.login} → {todayRec.logout}</div>}
+      </div></div>
+      <div className="card">
+        <h3 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:15,fontWeight:600,marginBottom:12,color:"var(--ink)"}}>Recent Attendance</h3>
+        {myRec.length===0?<p className="text-muted text-sm">No records.</p>:(
+          <table className="table"><thead><tr><th>Date</th><th>Login</th><th>Logout</th></tr></thead>
+          <tbody>{myRec.map((r,i)=><tr key={i}><td>{r.date}</td><td style={{color:"var(--success)",fontWeight:500}}>{r.login}</td><td style={{color:r.logout?"var(--danger)":"var(--ink-muted)"}}>{r.logout||"—"}</td></tr>)}</tbody></table>
+        )}
+      </div>
+    </div>
+  </div>);
+}
+
+// ─── HR ───────────────────────────────────────────────────────────────────────
+function HR({ user, leaves, setLeaves, attendance, users }) {
+  const [showModal,setShowModal]=useState(false);const [form,setForm]=useState({from:"",to:"",reason:""});
+  const [tab,setTab]=useState("calendar");const [leaveTab,setLeaveTab]=useState("pending");
+  const [calM,setCalM]=useState({year:2024,month:3});const [selDay,setSelDay]=useState(null);
+  const isSA=user.role==="superadmin";
+  const myLeaves=isSA?leaves:leaves.filter(l=>l.userId===user.id);
+  const filteredLeaves=leaveTab==="all"?myLeaves:myLeaves.filter(l=>l.status===leaveTab);
+  function submitLeave(){setLeaves(prev=>[...prev,{from:form.from,to:form.to,reason:form.reason,userId:user.id,id:Date.now(),status:"pending",appliedOn:todayISO()}]);setShowModal(false);setForm({from:"",to:"",reason:""});}
+  function updLeave(id,s){setLeaves(prev=>prev.map(l=>l.id===id?{...l,status:s}:l));}
+  const firstDay=new Date(calM.year,calM.month,1).getDay();
+  const daysInM=new Date(calM.year,calM.month+1,0).getDate();
+  const ds=d=>`${calM.year}-${String(calM.month+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+  function getDayData(day){const date=ds(day);return{att:attendance.filter(a=>a.date===date&&a.userId!==1),lv:leaves.filter(l=>l.userId!==1&&date>=l.from&&date<=l.to)};}
+  const selData=selDay?getDayData(selDay):null;
+  const todayAtt=attendance.filter(a=>a.date===todayISO()&&a.userId!==1);
+  const getUserById=id=>users.find(u=>u.id===id);
+  const employees=users.filter(u=>u.role!=="superadmin");
+
+  return(<div>
+    <div className="section-header"><div><h1 className="section-title">{isSA?"HR & Team":"My Leaves"}</h1></div>{!isSA&&<button className="btn btn-primary" onClick={()=>setShowModal(true)}>+ Apply Leave</button>}</div>
+    {isSA&&<div className="tabs">{[["calendar","Team Calendar"],["attendance","Today"],["leaves","Leaves"]].map(([k,l])=><div key={k} className={`tab ${tab===k?"active":""}`} onClick={()=>setTab(k)}>{l}</div>)}</div>}
+
+    {isSA&&tab==="calendar"&&(<div>
+      <div className="flex gap-12 mb-12" style={{flexWrap:"wrap"}}>
+        {[["chip-present","Present"],["chip-absent","Absent"],["chip-leave","Leave (Approved)"]].map(([c,l])=><span key={c} className={`hr-day-chip ${c}`} style={{display:"inline-block",width:"auto",fontSize:10,padding:"2px 8px"}}>{l}</span>)}
+      </div>
+      <div className="hr-cal-wrap">
+        <div className="hr-big-cal">
+          <div className="hr-cal-header">
+            <button className="mini-cal-nav" onClick={()=>setCalM(p=>p.month===0?{year:p.year-1,month:11}:{...p,month:p.month-1})}>‹</button>
+            <span className="hr-cal-month">{MONTH_NAMES[calM.month]} {calM.year}</span>
+            <button className="mini-cal-nav" onClick={()=>setCalM(p=>p.month===11?{year:p.year+1,month:0}:{...p,month:p.month+1})}>›</button>
+          </div>
+          <div className="hr-cal-grid">
+            {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d=><div key={d} className="hr-dow">{d}</div>)}
+            {Array(firstDay).fill(null).map((_,i)=><div key={"e"+i} style={{borderRight:"1px solid var(--cream-dark)",borderBottom:"1px solid var(--cream-dark)"}} />)}
+            {Array(daysInM).fill(null).map((_,i)=>{
+              const day=i+1;const {att,lv}=getDayData(day);const isSel=selDay===day;const date=ds(day);
+              return(<div key={day} className={`hr-day ${isSel?"selected":""}`} onClick={()=>setSelDay(isSel?null:day)}>
+                <div className="hr-day-num">{day}</div>
+                {employees.map(emp=>{
+                  const pres=att.find(a=>a.userId===emp.id);const leave=lv.find(l=>l.userId===emp.id);
+                  if(leave) return <span key={emp.id} className="hr-day-chip chip-leave">{emp.name.split(" ")[0]}</span>;
+                  if(pres) return <span key={emp.id} className="hr-day-chip chip-present">{emp.name.split(" ")[0]}: {pres.login}</span>;
+                  const dow=new Date(date).getDay();
+                  if(dow!==0&&dow!==6) return <span key={emp.id} className="hr-day-chip chip-absent">{emp.name.split(" ")[0]}</span>;
+                  return null;
+                })}
+              </div>);
+            })}
+          </div>
+        </div>
+        <div className="hr-day-panel">
+          {!selDay?<p className="text-muted text-sm" style={{textAlign:"center",padding:"20px 0"}}>Click a date to see detail</p>:(
+            <div>
+              <p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:17,fontWeight:600,color:"var(--ink)",marginBottom:14}}>{new Date(ds(selDay)+"T12:00").toLocaleDateString("en-IN",{weekday:"long",day:"numeric",month:"long"})}</p>
+              {employees.map(emp=>{
+                const pres=selData.att.find(a=>a.userId===emp.id);const leave=selData.lv.find(l=>l.userId===emp.id);
+                return(<div key={emp.id} className="emp-row">
+                  <div className="avatar sm">{emp.avatar}</div>
+                  <div style={{flex:1,fontSize:12}}>
+                    <strong style={{display:"block",marginBottom:3,color:"var(--ink)"}}>{emp.name}</strong>
+                    {leave?<><span className="badge badge-warning" style={{fontSize:9}}>On Leave</span><div className="text-muted" style={{marginTop:3}}>{leave.reason}</div></>
+                    :pres?<><span className="badge badge-success" style={{fontSize:9}}>Present</span><div className="text-muted" style={{marginTop:3}}>In: <strong>{pres.login}</strong> · Out: <strong>{pres.logout||"—"}</strong></div></>
+                    :<span className="badge badge-danger" style={{fontSize:9}}>{new Date(ds(selDay)).getDay()===0||new Date(ds(selDay)).getDay()===6?"Weekend":"Absent"}</span>}
+                  </div>
+                </div>);
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>)}
+
+    {isSA&&tab==="attendance"&&(<div className="card" style={{padding:0}}>
+      <table className="table"><thead><tr><th>Member</th><th>Login</th><th>Logout</th><th>Status</th></tr></thead>
+      <tbody>{employees.map(u=>{const r=todayAtt.find(a=>a.userId===u.id);return(
+        <tr key={u.id}><td><div className="flex items-center gap-8"><div className="avatar sm">{u.avatar}</div>{u.name}</div></td>
+        <td style={{color:r?"var(--success)":"var(--ink-muted)"}}>{r?.login||"—"}</td>
+        <td style={{color:r?.logout?"var(--danger)":"var(--ink-muted)"}}>{r?.logout||"—"}</td>
+        <td>{r?<span className="badge badge-success">Present</span>:<span className="badge badge-danger">Absent</span>}</td>
+        </tr>);})}</tbody></table>
+    </div>)}
+
+    {(isSA?tab==="leaves":true)&&(<div style={{marginTop:isSA?0:0}}>
+      {!isSA&&<div className="flex items-center justify-between mb-12"><h3 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:17,fontWeight:600,color:"var(--ink)"}}>My Leaves</h3><button className="btn btn-primary btn-sm" onClick={()=>setShowModal(true)}>+ Apply</button></div>}
+      <div className="tabs">{[["pending","Pending"],["approved","Approved"],["rejected","Rejected"],["all","All"]].map(([k,l])=><div key={k} className={`tab ${leaveTab===k?"active":""}`} onClick={()=>setLeaveTab(k)}>{l}</div>)}</div>
+      <div className="card" style={{padding:0}}>
+        <table className="table"><thead><tr>{isSA&&<th>Employee</th>}<th>From</th><th>To</th><th>Reason</th><th>Status</th>{isSA&&<th>Action</th>}</tr></thead>
+        <tbody>{filteredLeaves.map(l=>{const emp=getUserById(l.userId);return(
+          <tr key={l.id}>{isSA&&<td><div className="flex items-center gap-8"><div className="avatar sm">{emp?.avatar}</div>{emp?.name}</div></td>}
+          <td>{l.from}</td><td>{l.to}</td><td style={{maxWidth:150}}>{l.reason}</td><td>{getStatusBadge(l.status)}</td>
+          {isSA&&<td>{l.status==="pending"?<div className="flex gap-8"><button className="btn btn-success btn-sm" onClick={()=>updLeave(l.id,"approved")}>✓</button><button className="btn btn-danger btn-sm" onClick={()=>updLeave(l.id,"rejected")}>✕</button></div>:null}</td>}
+          </tr>);})}</tbody></table>
+        {filteredLeaves.length===0&&<div className="empty"><p>No requests.</p></div>}
+      </div>
+    </div>)}
+
+    {showModal&&(<Modal title="Apply for Leave" onClose={()=>setShowModal(false)}>
+      <div className="grid-2"><div className="form-group"><label className="form-label">From</label><input className="form-input" type="date" value={form.from} onChange={e=>setForm(p=>({...p,from:e.target.value}))} /></div><div className="form-group"><label className="form-label">To</label><input className="form-input" type="date" value={form.to} onChange={e=>setForm(p=>({...p,to:e.target.value}))} /></div></div>
+      <div className="form-group"><label className="form-label">Reason</label><textarea className="form-input form-textarea" value={form.reason} onChange={e=>setForm(p=>({...p,reason:e.target.value}))} /></div>
+      <div className="flex gap-12"><button className="btn btn-primary" onClick={submitLeave}>Submit</button><button className="btn btn-ghost" onClick={()=>setShowModal(false)}>Cancel</button></div>
+    </Modal>)}
+  </div>);
+}
+
+// ─── AI ASSESSMENT ────────────────────────────────────────────────────────────
+function Assessment({ attendance, leaves, content, users }) {
+  const employees=users.filter(u=>u.role!=="superadmin");
+  const [assessments,setAssessments]=useState({});const [loading,setLoading]=useState({});const [selected,setSelected]=useState(null);
+  async function run(emp){
+    setLoading(p=>({...p,[emp.id]:true}));
+    const res=await generateAssessment(emp,attendance.filter(a=>a.userId===emp.id),leaves.filter(l=>l.userId===emp.id),content.filter(c=>c.execId===emp.id));
+    setAssessments(p=>({...p,[emp.id]:{text:res,at:new Date().toLocaleString()}}));
+    setLoading(p=>({...p,[emp.id]:false}));setSelected(emp.id);
+  }
+  function score(text){const m=text.match(/(\d+(?:\.\d+)?)\s*\/\s*10/);return m?m[1]:"?";}
+  return(<div>
+    <div className="section-header"><div><h1 className="section-title">AI Employee Assessment</h1></div><span className="ai-badge" style={{fontSize:10,padding:"4px 10px"}}>✦ Claude</span></div>
+    <div style={{display:"grid",gridTemplateColumns:"280px 1fr",gap:16}}>
+      <div>
+        {employees.map(emp=>{const has=!!assessments[emp.id];const isLoad=loading[emp.id];const isSel=selected===emp.id;return(
+          <div key={emp.id} className="assess-emp-row" style={isSel?{borderColor:"var(--accent)",background:"var(--accent-pale)"}:{}} onClick={()=>has&&setSelected(emp.id)}>
+            <div className="avatar lg" style={{background:emp.role==="admin"?"var(--accent)":"var(--info)"}}>{emp.avatar}</div>
+            <div style={{flex:1}}><div style={{fontWeight:600,fontSize:13,color:"var(--ink)"}}>{emp.name}</div><div className="text-sm text-muted">{emp.username}</div></div>
+            {has&&!isLoad&&<div className="score-chip">{score(assessments[emp.id].text)}</div>}
+            <button className={`btn btn-sm ${has?"btn-ghost":"btn-accent"}`} disabled={isLoad} onClick={e=>{e.stopPropagation();run(emp);}}>
+              {isLoad?<span className="generating">…</span>:has?"Re-run":"✦ Assess"}
+            </button>
+          </div>);})}
+      </div>
+      <div>
+        {!selected&&!Object.values(loading).some(Boolean)&&<div className="card" style={{minHeight:280,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:12}}><div style={{fontSize:36}}>◐</div><p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:18,color:"var(--ink)"}}>Select an employee</p></div>}
+        {selected&&assessments[selected]&&<div className="card"><div className="flex items-center justify-between mb-16"><div><h3 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:18,fontWeight:600,color:"var(--ink)"}}>Report — {users.find(u=>u.id===selected)?.name}</h3><p className="text-muted text-sm">{assessments[selected].at}</p></div><span className="ai-badge">✦ AI</span></div><div className="assessment-prose" dangerouslySetInnerHTML={{__html:parseMarkdown(assessments[selected].text)}} /></div>}
+        {Object.entries(loading).filter(([,v])=>v).map(([id])=><div key={id} className="card" style={{textAlign:"center",padding:40}}><div style={{fontSize:28}} className="generating">◐</div><p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:18,color:"var(--ink)",marginTop:12}}>Analysing {users.find(u=>u.id===parseInt(id))?.name}…</p></div>)}
+      </div>
+    </div>
+  </div>);
+}
+
+// ─── PLANNER ──────────────────────────────────────────────────────────────────
+function PlannerCalendar({ user }) {
+  const [events,setEvents]=useState(initialPlannerEvents[user.id]||[]);
+
+  // Load from DB on mount
+  useEffect(()=>{
+    if(!dbReady()) return;
+    dbGetPlannerEvents(user.id).then(evs=>{ if(evs) setEvents(evs); });
+  },[user.id]);
+  const [selDate,setSelDate]=useState(todayISO());
+  const [cal,setCal]=useState(()=>{const d=new Date();return{year:d.getFullYear(),month:d.getMonth()};});
+  const [showModal,setShowModal]=useState(false);const [editEv,setEditEv]=useState(null);
+  const [form,setForm]=useState({title:"",startHour:9,endHour:10,color:PLANNER_COLORS[0]});
+  const firstDay=new Date(cal.year,cal.month,1).getDay();const daysInM=new Date(cal.year,cal.month+1,0).getDate();
+  const ds=day=>`${cal.year}-${String(cal.month+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+  const dayEvents=events.filter(e=>e.date===selDate);
+  function openAdd(h){setEditEv(null);setForm({title:"",startHour:h,endHour:Math.min(h+1,22),color:PLANNER_COLORS[0]});setShowModal(true);}
+  function openEdit(ev){setEditEv(ev);setForm({title:ev.title,startHour:ev.startHour,endHour:ev.endHour,color:ev.color});setShowModal(true);}
+  async function saveEv(){
+    if(!form.title.trim()) return;
+    if(editEv){
+      const updated = {...editEv,...form,date:selDate};
+      setEvents(prev=>prev.map(e=>e.id===editEv.id?updated:e));
+      if(dbReady()) await dbUpsertPlannerEvent({...updated,userId:user.id});
+    } else {
+      const newEv = {id:Date.now(),...form,date:selDate,userId:user.id};
+      if(dbReady()){ const saved=await dbUpsertPlannerEvent(newEv); if(saved) { setEvents(prev=>[...prev,saved]); setShowModal(false); return; } }
+      setEvents(prev=>[...prev,newEv]);
+    }
+    setShowModal(false);
+  }
+  function delEv(id){
+    setEvents(prev=>prev.filter(e=>e.id!==id));
+    if(dbReady()) dbDeletePlannerEvent(id);
+    setShowModal(false);
+  }
+  const selDisplay=new Date(selDate+"T12:00").toLocaleDateString("en-IN",{weekday:"long",day:"numeric",month:"long"});
+  return(<div>
+    <div className="section-header"><div><h1 className="section-title">My Planner</h1></div><button className="btn btn-primary" onClick={()=>openAdd(9)}>+ Add Task</button></div>
+    <div style={{display:"grid",gridTemplateColumns:"210px 1fr",gap:16}}>
+      <div>
+        <div className="mini-cal">
+          <div className="mini-cal-header"><button className="mini-cal-nav" onClick={()=>setCal(p=>p.month===0?{year:p.year-1,month:11}:{...p,month:p.month-1})}>‹</button><span className="mini-cal-title">{MONTH_NAMES[cal.month].slice(0,3)} {cal.year}</span><button className="mini-cal-nav" onClick={()=>setCal(p=>p.month===11?{year:p.year+1,month:0}:{...p,month:p.month+1})}>›</button></div>
+          <div className="mini-cal-grid">
+            {["S","M","T","W","T","F","S"].map((d,i)=><div key={i} className="mini-cal-dow">{d}</div>)}
+            {Array(firstDay).fill(null).map((_,i)=><div key={"e"+i} />)}
+            {Array(daysInM).fill(null).map((_,i)=>{const day=i+1,d=ds(day),isSel=d===selDate,hasE=events.some(e=>e.date===d);return(<div key={day} onClick={()=>setSelDate(d)} className={`mini-cal-day ${isSel?"selected":""}${hasE&&!isSel?" has-event":""}`}>{day}</div>);})}
+          </div>
+        </div>
+        <div className="mini-cal" style={{marginTop:11}}>
+          <p style={{fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:"var(--ink-muted)",marginBottom:9}}>Tasks — {selDisplay}</p>
+          {dayEvents.length===0?<p className="text-muted text-sm">None.</p>:dayEvents.map(ev=>(
+            <div key={ev.id} className="flex items-center gap-8" style={{marginBottom:8,cursor:"pointer"}} onClick={()=>openEdit(ev)}>
+              <div style={{width:9,height:9,borderRadius:3,background:ev.color,flexShrink:0}} />
+              <div style={{flex:1}}><div style={{fontSize:12,fontWeight:500,color:"var(--ink)"}}>{ev.title}</div><div style={{fontSize:9.5,color:"var(--ink-muted)"}}>{ev.startHour}:00–{ev.endHour}:00</div></div>
+              <button onClick={e=>{e.stopPropagation();delEv(ev.id);}} style={{background:"none",border:"none",cursor:"pointer",color:"var(--danger)",fontSize:11}}>✕</button>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="timeline-wrap">
+        <div className="timeline-header"><span className="timeline-date">{selDisplay}</span><button className="btn btn-ghost btn-sm" onClick={()=>openAdd(9)}>+ Block</button></div>
+        <div className="timeline-body">
+          {HOURS.map(hour=>{
+            const evHere=dayEvents.filter(e=>e.startHour===hour);const blocked=dayEvents.filter(e=>hour>=e.startHour&&hour<e.endHour);
+            return(<div key={hour} className="hour-row">
+              <div className="hour-label">{hour<12?`${hour}am`:hour===12?"12pm":`${hour-12}pm`}</div>
+              <div className="hour-slot" onClick={()=>!blocked.length&&openAdd(hour)}>
+                {evHere.map(ev=><div key={ev.id} className="event-block" style={{background:ev.color,height:`${(ev.endHour-ev.startHour)*58}px`}} onClick={e=>{e.stopPropagation();openEdit(ev);}}><div style={{fontWeight:600,lineHeight:1.3}}>{ev.title}</div><div style={{fontSize:9.5,opacity:0.8,marginTop:1}}>{ev.startHour}:00–{ev.endHour}:00</div></div>)}
+                {!blocked.length&&evHere.length===0&&<div className="add-hint">+ Add block</div>}
+              </div>
+            </div>);
+          })}
+        </div>
+      </div>
+    </div>
+    {showModal&&(<Modal title={editEv?"Edit Task":"Add Task Block"} onClose={()=>setShowModal(false)}>
+      <div className="form-group"><label className="form-label">Title</label><input className="form-input" value={form.title} onChange={e=>setForm(p=>({...p,title:e.target.value}))} autoFocus /></div>
+      <div className="grid-2">
+        <div className="form-group"><label className="form-label">Start</label><select className="form-input form-select" value={form.startHour} onChange={e=>setForm(p=>({...p,startHour:parseInt(e.target.value)}))}>{ HOURS.map(h=><option key={h} value={h}>{h<12?`${h}:00 AM`:h===12?"12:00 PM":`${h-12}:00 PM`}</option>)}</select></div>
+        <div className="form-group"><label className="form-label">End</label><select className="form-input form-select" value={form.endHour} onChange={e=>setForm(p=>({...p,endHour:parseInt(e.target.value)}))}>{ HOURS.filter(h=>h>form.startHour).map(h=><option key={h} value={h}>{h<12?`${h}:00 AM`:h===12?"12:00 PM":`${h-12}:00 PM`}</option>)}</select></div>
+      </div>
+      <div className="form-group"><label className="form-label">Color</label><div className="flex gap-8 mt-4">{PLANNER_COLORS.map(c=><div key={c} onClick={()=>setForm(p=>({...p,color:c}))} style={{width:24,height:24,borderRadius:6,background:c,cursor:"pointer",border:form.color===c?"3px solid var(--ink)":"3px solid transparent"}} />)}</div></div>
+      <div className="flex gap-12 mt-16"><button className="btn btn-primary" onClick={saveEv}>Save</button>{editEv&&<button className="btn btn-danger" onClick={()=>delEv(editEv.id)}>Delete</button>}<button className="btn btn-ghost" onClick={()=>setShowModal(false)}>Cancel</button></div>
+    </Modal>)}
+  </div>);
+}
+
+// ─── USER LOGINS ──────────────────────────────────────────────────────────────
+function UserLogins({ users, setUsers, currentUser, setCurrentUser }) {
+  const [editId, setEditId] = useState(null);
+  const [draft, setDraft] = useState({ name: "", displayName: "" });
+  const [flashId, setFlashId] = useState(null);
+
+  function startEdit(u) {
+    setEditId(u.id);
+    setDraft({ name: u.name, displayName: u.displayName || u.username });
+  }
+
+  function save(u) {
+    const trimName = draft.name.trim();
+    const trimDisplay = draft.displayName.trim();
+    if (!trimName || !trimDisplay) return;
+    const newAvatar = trimName.split(" ").filter(Boolean).map(n => n[0]).join("").toUpperCase().slice(0, 2);
+    setUsers(prev => prev.map(x =>
+      x.id === u.id ? { ...x, name: trimName, displayName: trimDisplay, avatar: newAvatar } : x
+    ));
+    if (currentUser.id === u.id) {
+      setCurrentUser(prev => ({ ...prev, name: trimName, displayName: trimDisplay, avatar: newAvatar }));
+    }
+    setEditId(null);
+    setFlashId(u.id);
+    setTimeout(() => setFlashId(null), 2000);
+  }
+
+  function cancel() { setEditId(null); setDraft({ name: "", displayName: "" }); }
+
+  const roleBg = r => r === "superadmin" ? "#943535" : r === "admin" ? "var(--accent)" : "var(--info)";
+
+  return (
+    <div>
+      <div className="section-header">
+        <div>
+          <h1 className="section-title">User Login Details</h1>
+          <p className="section-sub">Edit any member name — updates everywhere instantly</p>
+        </div>
+      </div>
+      <div className="card" style={{padding:0}}>
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Member (Full Name)</th>
+              <th>Display Name</th>
+              <th>Username</th>
+              <th>Role</th>
+              <th>Password</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {users.map(u => {
+              const isEditing = editId === u.id;
+              const flashing = flashId === u.id;
+              const previewAvatar = isEditing
+                ? draft.name.split(" ").filter(Boolean).map(n => n[0]).join("").toUpperCase().slice(0, 2) || "?"
+                : u.avatar;
+              return (
+                <tr key={u.id} style={{ background: flashing ? "rgba(62,125,82,0.07)" : "inherit", transition: "background 0.4s" }}>
+                  <td>
+                    <div className="flex items-center gap-12">
+                      <div className="avatar" style={{ background: roleBg(u.role), flexShrink: 0, fontSize: 10 }}>
+                        {previewAvatar}
+                      </div>
+                      {isEditing ? (
+                        <input
+                          className="form-input"
+                          style={{ width: 150, padding: "5px 9px", fontSize: 12.5 }}
+                          value={draft.name}
+                          autoFocus
+                          onChange={e => setDraft(p => ({ ...p, name: e.target.value }))}
+                          onKeyDown={e => { if (e.key === "Enter") save(u); if (e.key === "Escape") cancel(); }}
+                          placeholder="Full name"
+                        />
+                      ) : (
+                        <span style={{ fontWeight: 500, color: "var(--ink)" }}>
+                          {u.name}
+                          {flashing && <span style={{ fontSize: 10, color: "var(--success)", marginLeft: 6 }}>✓ Saved</span>}
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  <td>
+                    {isEditing ? (
+                      <input
+                        className="form-input"
+                        style={{ width: 140, padding: "5px 9px", fontSize: 12.5 }}
+                        value={draft.displayName}
+                        onChange={e => setDraft(p => ({ ...p, displayName: e.target.value }))}
+                        onKeyDown={e => { if (e.key === "Enter") save(u); if (e.key === "Escape") cancel(); }}
+                        placeholder="Chat name"
+                      />
+                    ) : (
+                      <span style={{ fontSize: 12.5, color: "var(--ink)" }}>{u.displayName || u.username}</span>
+                    )}
+                  </td>
+                  <td style={{ fontFamily: "monospace", fontSize: 12.5, color: "var(--ink)" }}>{u.username}</td>
+                  <td>
+                    <span className="badge badge-neutral" style={{ textTransform: "capitalize" }}>
+                      {u.role.replace("superadmin", "Super Admin")}
+                    </span>
+                  </td>
+                  <td>
+                    <code style={{ background: "var(--cream-dark)", padding: "2px 7px", borderRadius: 5, fontSize: 11, color: "var(--ink)" }}>
+                      {u.password}
+                    </code>
+                  </td>
+                  <td>
+                    {isEditing ? (
+                      <div className="flex gap-8">
+                        <button className="btn btn-success btn-sm" onClick={() => save(u)}>✓ Save</button>
+                        <button className="btn btn-ghost btn-sm" onClick={cancel}>✕</button>
+                      </div>
+                    ) : (
+                      <button className="btn btn-ghost btn-sm" onClick={() => startEdit(u)}>✎ Edit</button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p style={{ fontSize: 11, color: "var(--ink-muted)", marginTop: 10, paddingLeft: 4 }}>
+        ✦ Changing a name updates the sidebar, dashboard greeting, chat, HR panel, AI assessment, and attendance — everywhere at once.
+      </p>
+    </div>
+  );
+}
+
+// ─── CHAT PAGE ────────────────────────────────────────────────────────────────
+function ChatPage({ user, users, messages, setMessages, onlineIds }) {
+  const [thread,setThread]=useState(null);const [input,setInput]=useState("");const [call,setCall]=useState(null);
+  const msgEndRef=useRef();
+  const visibleMsgs=thread==="all"?messages.filter(m=>m.toId==="all"):messages.filter(m=>(m.fromId===user.id&&m.toId===thread)||(m.fromId===thread&&m.toId===user.id));
+  useEffect(()=>{ msgEndRef.current?.scrollIntoView({behavior:"smooth"}); },[messages,thread]);
+  function send(){if(!input.trim()||!thread)return;setMessages(p=>[...p,{id:Date.now(),fromId:user.id,toId:thread,text:input.trim(),time:nowStr(),date:todayISO()}]);setInput("");}
+  function startCall(type,participants){setCall({type,participants:[users.find(u=>u.id===user.id),...participants]});}
+  const others=users.filter(u=>u.id!==user.id);
+  const getUser=id=>users.find(u=>u.id===id);
+
+  return(<div style={{display:"grid",gridTemplateColumns:"280px 1fr",gap:0,height:"calc(100vh - 112px)",margin:"-24px"}}>
+    {call&&<VideoCallModal participants={call.participants} onEnd={()=>setCall(null)} />}
+    {/* Contacts sidebar */}
+    <div style={{background:"var(--surface)",borderRight:"1px solid var(--border)",display:"flex",flexDirection:"column",height:"100%"}}>
+      <div style={{padding:"16px",borderBottom:"1px solid var(--border)"}}>
+        <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:18,fontWeight:600,color:"var(--ink)"}}>Team Chat</div>
+        <div style={{fontSize:10,color:"var(--ink-muted)",marginTop:2}}>{onlineIds.length} of {users.length} online</div>
+      </div>
+      {/* Colour bar */}
+      <div style={{height:3,background:"linear-gradient(90deg,#C4954A,#E8C88A,#4A7C59,#2E5F8A)"}} />
+      <div style={{overflowY:"auto",flex:1}}>
+        {/* All Hands */}
+        <div className={`chat-contact ${thread==="all"?"active":""}`} onClick={()=>setThread("all")}>
+          <div className="avatar" style={{background:"linear-gradient(135deg,#C4954A,#9B3A3A)",fontSize:13}}>✦</div>
+          <div className="chat-contact-info"><div className="chat-contact-name">All Hands</div><div className="chat-contact-last">Team channel · {users.length} members</div></div>
+          <button className="call-btn call-btn-video" style={{fontSize:9}} onClick={e=>{e.stopPropagation();startCall("video",others);}}>📹</button>
+        </div>
+        {others.map(u=>{
+          const isOnline=onlineIds.includes(u.id);const lastMsg=messages.filter(m=>(m.fromId===u.id&&m.toId===user.id)||(m.fromId===user.id&&m.toId===u.id)).slice(-1)[0];
+          return(<div key={u.id} className={`chat-contact ${thread===u.id?"active":""}`} onClick={()=>setThread(u.id)}>
+            <div style={{position:"relative"}}>
+              <div className="avatar sm" style={{background:u.role==="admin"?"var(--accent)":u.role==="superadmin"?"#943535":"var(--info)"}}>{u.avatar}</div>
+              <div className={`status-dot ${isOnline?"status-online":"status-offline"}`} style={{position:"absolute",bottom:0,right:0,border:"2px solid var(--surface)"}} />
+            </div>
+            <div className="chat-contact-info">
+              <div className="chat-contact-name">{u.displayName||u.username}</div>
+              <div className="chat-contact-last">{isOnline?"● Active now":"○ Away"}</div>
+              {lastMsg&&<div className="chat-contact-last" style={{marginTop:1}}>{lastMsg.text.slice(0,28)}{lastMsg.text.length>28?"…":""}</div>}
+            </div>
+            <button className="call-btn call-btn-video" style={{fontSize:9}} onClick={e=>{e.stopPropagation();startCall("video",[u]);}}>📹</button>
+          </div>);
+        })}
+      </div>
+    </div>
+
+    {/* Message area */}
+    <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
+      {!thread?(
+        <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:16,background:"var(--cream-dark)"}}>
+          {/* Decorative mural */}
+          <svg width="200" height="200" viewBox="0 0 200 200" style={{opacity:0.3}}>
+            <circle cx="100" cy="100" r="80" fill="none" stroke="#C4954A" strokeWidth="1"/>
+            <circle cx="100" cy="100" r="50" fill="none" stroke="#E8C88A" strokeWidth="0.5"/>
+            <circle cx="100" cy="100" r="110" fill="none" stroke="#C4954A" strokeWidth="0.3"/>
+            <text x="100" y="108" textAnchor="middle" fontSize="32" fill="#C4954A" fontFamily="serif">💬</text>
+          </svg>
+          <p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:20,color:"var(--ink)"}}>Select a conversation</p>
+          <p className="text-muted text-sm">Message a teammate or open All Hands</p>
+        </div>
+      ):(
+        <>
+          {/* Thread header */}
+          <div style={{padding:"12px 18px",borderBottom:"1px solid var(--border)",display:"flex",alignItems:"center",gap:12,background:"var(--surface)"}}>
+            {thread==="all"?(
+              <div className="avatar" style={{background:"linear-gradient(135deg,#C4954A,#9B3A3A)",fontSize:13}}>✦</div>
+            ):(
+              <div style={{position:"relative"}}>
+                <div className="avatar" style={{background:getUser(thread)?.role==="admin"?"var(--accent)":"var(--info)"}}>{getUser(thread)?.avatar}</div>
+                <div className={`status-dot ${onlineIds.includes(thread)?"status-online":"status-offline"}`} style={{position:"absolute",bottom:0,right:0,border:"2px solid var(--surface)"}} />
+              </div>
+            )}
+            <div style={{flex:1}}>
+              <div style={{fontWeight:600,fontSize:14,color:"var(--ink)"}}>{thread==="all"?"All Hands":(getUser(thread)?.displayName||getUser(thread)?.username)}</div>
+              <div style={{fontSize:10,color:"var(--ink-muted)"}}>{thread==="all"?`${onlineIds.length} active`:onlineIds.includes(thread)?"Active now":"Away"}</div>
+            </div>
+            <button className="call-btn call-btn-audio" onClick={()=>startCall("audio",thread==="all"?others:[getUser(thread)])}>📞 Call</button>
+            <button className="call-btn call-btn-video" onClick={()=>startCall("video",thread==="all"?others:[getUser(thread)])}>📹 Meet</button>
+          </div>
+          {/* Messages */}
+          <div style={{flex:1,overflowY:"auto",padding:"16px 18px",display:"flex",flexDirection:"column",gap:10,background:"var(--cream-dark)"}}>
+            {visibleMsgs.length===0&&<div style={{textAlign:"center",color:"var(--ink-muted)",fontSize:12,marginTop:20}}>Start the conversation ✦</div>}
+            {visibleMsgs.map(m=>{
+              const isMe=m.fromId===user.id;const sender=getUser(m.fromId);
+              return(<div key={m.id} style={{display:"flex",flexDirection:"column",alignItems:isMe?"flex-end":"flex-start"}}>
+                {!isMe&&<div style={{fontSize:10,color:"var(--ink-muted)",marginBottom:2}}>{sender?.displayName||sender?.username}</div>}
+                <div className={`chat-bubble ${isMe?"mine":"theirs"}`}>{m.text}<div className="chat-bubble-time">{m.time}</div></div>
+              </div>);
+            })}
+            <div ref={msgEndRef} />
+          </div>
+          {/* Input */}
+          <div style={{padding:"12px 16px",borderTop:"1px solid var(--border)",display:"flex",gap:8,background:"var(--surface)"}}>
+            <input className="chat-input" style={{flex:1,borderRadius:8,padding:"9px 14px"}} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} placeholder={`Message ${thread==="all"?"all hands":(getUser(thread)?.displayName||getUser(thread)?.username)}…`} />
+            <button className="btn btn-accent" onClick={send}>Send ➤</button>
+          </div>
+        </>
+      )}
+    </div>
+  </div>);
+}
+
+// ─── APP ROOT ─────────────────────────────────────────────────────────────────
+export default function App() {
+  const [users,setUsers]       = useState(INITIAL_USERS);
+  const [user,setUser]         = useState(null);
+  const [active,setActive]     = useState("dashboard");
+  const [dark,setDark]         = useState(false);
+  const [clients,setClients]   = useState(initialClients);
+  const [content,setContent]   = useState(initialContent);
+  const [calendar,setCalendar] = useState(initialCalendar);
+  const [leaves,setLeaves]     = useState(initialLeaves);
+  const [attendance,setAttendance] = useState(initialAttendance);
+  const [messages,setMessages] = useState(initialMessages);
+  const [onlineIds,setOnlineIds] = useState([1,2,3]);
+  const [phase,setPhase]       = useState(0);
+  const [dbLoaded,setDbLoaded] = useState(false);
+  const [dbStatus,setDbStatus] = useState("idle"); // idle | loading | ready | offline
+
+  // ── Wave animation ────────────────────────────────────────────────────────
+  useEffect(()=>{
+    const iv=setInterval(()=>setPhase(p=>p+0.006),50);
+    return()=>clearInterval(iv);
+  },[]);
+
+  // ── Load all data from Supabase on mount ──────────────────────────────────
+  useEffect(()=>{
+    if(!dbReady()){ setDbStatus("offline"); setDbLoaded(true); return; }
+    setDbStatus("loading");
+    async function loadAll(){
+      try {
+        const [u,cl,co,ca,le,at,ms] = await Promise.all([
+          dbGetUsers(), dbGetClients(), dbGetContent(),
+          dbGetCalendar(), dbGetLeaves(), dbGetAttendance(), dbGetMessages(),
+        ]);
+        if(u)  setUsers(u);
+        if(cl) setClients(cl);
+        if(co) setContent(co);
+        if(ca) setCalendar(ca);
+        if(le) setLeaves(le);
+        if(at) setAttendance(at);
+        if(ms) setMessages(ms);
+        setDbStatus("ready");
+      } catch(e){ console.error("DB load error:",e); setDbStatus("offline"); }
+      setDbLoaded(true);
+    }
+    loadAll();
+  },[]);
+
+  // ── Realtime chat subscription ────────────────────────────────────────────
+  useEffect(()=>{
+    if(!dbReady()) return;
+    const unsub = subscribeToMessages(msg=>{
+      setMessages(prev=>{
+        if(prev.find(m=>m.id===msg.id)) return prev; // dedupe
+        return [...prev,msg];
+      });
+    });
+    return unsub;
+  },[]);
+
+  // ── DB-aware state setters ────────────────────────────────────────────────
+  // Clients
+  const handleSetClients = useCallback(async (updater)=>{
+    setClients(prev=>{
+      const next = typeof updater==="function" ? updater(prev) : updater;
+      // Upsert changed/new items
+      const prevIds = new Set(prev.map(c=>c.id));
+      next.forEach(c=>{ if(!prevIds.has(c.id)||JSON.stringify(c)!==JSON.stringify(prev.find(p=>p.id===c.id))) dbUpsertClient(c); });
+      return next;
+    });
+  },[]);
+
+  // Content
+  const handleSetContent = useCallback(async (updater)=>{
+    setContent(prev=>{
+      const next = typeof updater==="function" ? updater(prev) : updater;
+      const prevMap = Object.fromEntries(prev.map(c=>[c.id,c]));
+      next.forEach(c=>{ if(!prevMap[c.id]||JSON.stringify(c)!==JSON.stringify(prevMap[c.id])) dbUpsertContent(c); });
+      return next;
+    });
+  },[]);
+
+  // Calendar
+  const handleSetCalendar = useCallback(async (updater)=>{
+    setCalendar(prev=>{
+      const next = typeof updater==="function" ? updater(prev) : updater;
+      const prevMap = Object.fromEntries(prev.map(c=>[c.id,c]));
+      next.forEach(c=>{ if(!prevMap[c.id]||JSON.stringify(c)!==JSON.stringify(prevMap[c.id])) dbUpsertCalendar(c); });
+      return next;
+    });
+  },[]);
+
+  // Leaves
+  const handleSetLeaves = useCallback(async (updater)=>{
+    setLeaves(prev=>{
+      const next = typeof updater==="function" ? updater(prev) : updater;
+      const prevMap = Object.fromEntries(prev.map(l=>[l.id,l]));
+      next.forEach(l=>{ if(!prevMap[l.id]||JSON.stringify(l)!==JSON.stringify(prevMap[l.id])) dbUpsertLeave(l); });
+      return next;
+    });
+  },[]);
+
+  // Attendance
+  const handleSetAttendance = useCallback(async (updater)=>{
+    setAttendance(prev=>{
+      const next = typeof updater==="function" ? updater(prev) : updater;
+      const prevKeys = new Set(prev.map(a=>`${a.userId}_${a.date}`));
+      next.forEach(a=>{ if(!prevKeys.has(`${a.userId}_${a.date}`)) dbUpsertAttendance(a); });
+      return next;
+    });
+  },[]);
+
+  // Messages — insert to DB then let realtime handle state update
+  const handleSetMessages = useCallback((updater)=>{
+    setMessages(prev=>{
+      const next = typeof updater==="function" ? updater(prev) : updater;
+      const newMsg = next.find(m=>!prev.find(p=>p.id===m.id));
+      if(newMsg && dbReady()) dbInsertMessage(newMsg);
+      return next;
+    });
+  },[]);
+
+  // Users
+  const handleSetUsers = useCallback((updater)=>{
+    setUsers(prev=>{
+      const next = typeof updater==="function" ? updater(prev) : updater;
+      const prevMap = Object.fromEntries(prev.map(u=>[u.id,u]));
+      next.forEach(u=>{
+        if(!prevMap[u.id]) dbInsertUser(u);
+        else if(JSON.stringify(u)!==JSON.stringify(prevMap[u.id])) dbUpdateUser(u.id,u);
+      });
+      // Deletions
+      prev.forEach(u=>{ if(!next.find(n=>n.id===u.id)) dbDeleteUser(u.id); });
+      return next;
+    });
+  },[]);
+
+  // Password change — also updates DB
+  function handlePasswordChange(newPw){
+    handleSetUsers(p=>p.map(u=>u.id===user.id?{...u,password:newPw}:u));
+    setUser(p=>({...p,password:newPw}));
+  }
+
+  // setUser wrapper — keeps user session in sync when users list changes
+  const handleSetUser = useCallback((updater)=>{
+    setUser(prev=>{
+      const next = typeof updater==="function" ? updater(prev) : updater;
+      return next;
+    });
+  },[]);
+
+  const titles={dashboard:"Dashboard",clients:"Clients",calendar:"Content Calendar",content:"Content",approvals:"Approvals",punch:"Attendance",hr:"HR & Team",assessment:"AI Assessment",logins:"User Logins",notes:"My Planner",chat:"Team Chat",settings:"Settings"};
+  const pendingCount=content.filter(c=>(user?.role==="admin"&&c.status==="pending_admin")||(user?.role==="superadmin"&&(c.status==="pending_superadmin"||c.status==="pending_admin"))).length;
+
+  // Loading screen
+  if(!dbLoaded && dbStatus==="loading"){
+    return(
+      <>
+        <style>{getStyles(false)}</style>
+        <div style={{minHeight:"100vh",background:"#080510",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:16}}>
+          <WavesSVG height={window.innerHeight||700} opacity={0.4} phase={phase} />
+          <div style={{position:"relative",zIndex:2,textAlign:"center"}}>
+            <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:38,fontWeight:700,color:"white",letterSpacing:-1}}>Flow <em style={{fontStyle:"italic",color:"#E8608A"}}>by</em> Anecdote</div>
+            <div style={{fontSize:11,letterSpacing:3,textTransform:"uppercase",color:"rgba(255,255,255,0.4)",marginTop:8,marginBottom:32}}>Agency Management Platform</div>
+            <div style={{fontSize:13,color:"rgba(255,255,255,0.5)",animation:"pulse 1.4s ease-in-out infinite"}}>Connecting to database…</div>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  if(!user) return(
+    <>
+      <style>{getStyles(dark)}</style>
+      {dbStatus==="offline"&&(
+        <div style={{position:"fixed",bottom:16,right:16,background:"#3A1A0A",border:"1px solid #E8553A",borderRadius:8,padding:"8px 14px",fontSize:11,color:"#FFA07A",zIndex:999,display:"flex",alignItems:"center",gap:7}}>
+          ⚠ Running offline — changes won't be saved. Add Supabase keys to go live.
+        </div>
+      )}
+      <LoginPage onLogin={setUser} dark={dark} phase={phase} users={users} />
+    </>
+  );
+
+  return(
+    <>
+      <style>{getStyles(dark)}</style>
+      <WaveAccentBar phase={phase} />
+      <AmbientWave dark={dark} phase={phase} />
+      {dbStatus==="offline"&&(
+        <div style={{position:"fixed",bottom:16,right:16,background:"#3A1A0A",border:"1px solid #E8553A",borderRadius:8,padding:"8px 14px",fontSize:11,color:"#FFA07A",zIndex:999,display:"flex",alignItems:"center",gap:7}}>
+          ⚠ Offline mode — add Supabase keys to persist data
+        </div>
+      )}
+      <div className="app" style={{paddingTop:3,position:"relative",zIndex:1}}>
+        <Sidebar user={user} active={active} setActive={setActive} pendingCount={pendingCount} chatUnread={0} />
+        <div className="main">
+          <div className="topbar">
+            <span className="topbar-title serif" style={{fontStyle:active==="dashboard"?"italic":"normal"}}>{titles[active]||active}</span>
+            <div className="topbar-right">
+              <button className="icon-btn" title="Toggle Theme" onClick={()=>setDark(p=>!p)}>{dark?"☀":"🌙"}</button>
+              <div className="flex items-center gap-8"><div className="avatar sm">{user.avatar}</div><span style={{fontSize:12,fontWeight:500,color:"var(--ink)"}}>{user.displayName||user.username}</span></div>
+              <button className="btn btn-ghost btn-sm" onClick={()=>setUser(null)}>Sign Out</button>
+            </div>
+          </div>
+          <div className="content" style={{paddingRight:0}}>
+            {active==="dashboard"&&<div style={{paddingRight:24}}><Dashboard user={user} clients={clients} content={content} setContent={handleSetContent} attendance={attendance} dark={dark} /></div>}
+            {active==="clients"&&<div style={{paddingRight:24}}><Clients user={user} clients={clients} setClients={handleSetClients} /></div>}
+            {active==="calendar"&&<div style={{paddingRight:24}}><ContentCalendar user={user} clients={clients} calendar={calendar} setCalendar={handleSetCalendar} users={users} /></div>}
+            {active==="content"&&<div style={{paddingRight:24}}><Content user={user} clients={clients} content={content} setContent={handleSetContent} users={users} /></div>}
+            {active==="approvals"&&(user.role==="admin"||user.role==="superadmin")&&<div style={{paddingRight:24}}><Approvals user={user} clients={clients} content={content} setContent={handleSetContent} users={users} /></div>}
+            {active==="punch"&&<div style={{paddingRight:24}}><PunchPage user={user} attendance={attendance} setAttendance={handleSetAttendance} /></div>}
+            {active==="hr"&&<div style={{paddingRight:24}}><HR user={user} leaves={leaves} setLeaves={handleSetLeaves} attendance={attendance} users={users} /></div>}
+            {active==="assessment"&&user.role==="superadmin"&&<div style={{paddingRight:24}}><Assessment attendance={attendance} leaves={leaves} content={content} users={users} /></div>}
+            {active==="notes"&&<div style={{paddingRight:24}}><PlannerCalendar user={user} /></div>}
+            {active==="logins"&&user.role==="superadmin"&&<div style={{paddingRight:24}}><UserLogins users={users} setUsers={handleSetUsers} currentUser={user} setCurrentUser={handleSetUser} /></div>}
+            {active==="chat"&&<ChatPage user={user} users={users} messages={messages} setMessages={handleSetMessages} onlineIds={onlineIds} />}
+            {active==="settings"&&<div style={{paddingRight:24}}><Settings user={user} users={users} setUsers={handleSetUsers} dark={dark} setDark={setDark} onPasswordChange={handlePasswordChange} /></div>}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
