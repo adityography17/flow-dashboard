@@ -10,6 +10,28 @@ const INITIAL_USERS = [
 
 const SERVICES     = ["Social Media Management","Branding","Design","Video Editing","Photography","Web Design"];
 const PLANNER_COLORS = ["#C4954A","#4A7C59","#2E5F8A","#9B3A3A","#6B4E9B","#B8860B"];
+const MOTIVATIONAL_QUOTES = [
+  { text: "The secret of getting ahead is getting started.", author: "Mark Twain" },
+  { text: "Creativity is intelligence having fun.", author: "Albert Einstein" },
+  { text: "Done is better than perfect.", author: "Sheryl Sandberg" },
+  { text: "Your brand is what people say about you when you're not in the room.", author: "Jeff Bezos" },
+  { text: "Content is king.", author: "Bill Gates" },
+  { text: "Good design is obvious. Great design is transparent.", author: "Joe Sparano" },
+  { text: "The best marketing doesn't feel like marketing.", author: "Tom Fishburne" },
+  { text: "Make it simple, but significant.", author: "Don Draper" },
+  { text: "Consistency is the true foundation of trust.", author: "Roy T. Bennett" },
+  { text: "Engage, Enlighten, Encourage and especially just be yourself.", author: "Germany Kent" },
+  { text: "A brand is no longer what we tell the consumer it is.", author: "Scott Cook" },
+  { text: "Either write something worth reading or do something worth writing.", author: "Benjamin Franklin" },
+  { text: "People don't buy what you do, they buy why you do it.", author: "Simon Sinek" },
+  { text: "Your work is going to fill a large part of your life. Do great work.", author: "Steve Jobs" },
+  { text: "Design is not just what it looks like. Design is how it works.", author: "Steve Jobs" },
+  { text: "In the middle of every difficulty lies opportunity.", author: "Albert Einstein" },
+  { text: "Hard work beats talent when talent doesn't work hard.", author: "Tim Notke" },
+  { text: "The only way to do great work is to love what you do.", author: "Steve Jobs" },
+  { text: "Success is not final, failure is not fatal.", author: "Winston Churchill" },
+  { text: "Opportunities don't happen, you create them.", author: "Chris Grosser" },
+];
 const HOURS        = Array.from({length:14},(_,i)=>i+8);
 const MONTH_NAMES  = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
@@ -26,7 +48,7 @@ const initialAttendance = [];
 const initialPlannerEvents = {};
 const initialMessages = [];
 
-// ── localStorage persistence helpers ─────────────────────────────────────────
+// ── localStorage helpers (local cache / offline fallback) ────────────────────
 function lsGet(key, fallback) {
   try {
     if(typeof localStorage === "undefined") return fallback;
@@ -39,6 +61,63 @@ function lsSet(key, val) {
     if(typeof localStorage === "undefined") return;
     localStorage.setItem(key, JSON.stringify(val));
   } catch {}
+}
+
+// ── Supabase client ───────────────────────────────────────────────────────────
+// ⚠️  PASTE YOUR VALUES HERE ⚠️
+const SUPABASE_URL = "https://vouhrqmcpmakqcnaasdb.supabase.co";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZvdWhycW1jcG1ha3FjbmFhc2RiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI0MTYwMDYsImV4cCI6MjA4Nzk5MjAwNn0.4yiAH-2ax3WQr4E87driVN0JJ3HaZS28KObbpaTnYyc";
+
+let _sb = null;
+async function getSB() {
+  if(_sb) return _sb;
+  if(!SUPABASE_URL || SUPABASE_URL === "YOUR_SUPABASE_URL_HERE") return null;
+  try {
+    const { createClient } = await import("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm");
+    _sb = createClient(SUPABASE_URL, SUPABASE_KEY, {
+      realtime: { params: { eventsPerSecond: 10 } }
+    });
+    return _sb;
+  } catch(e) { console.warn("Supabase load failed:", e); return null; }
+}
+
+// Generic helpers — fall back to localStorage if Supabase unavailable
+async function dbGet(table, fallback=[]) {
+  const sb = await getSB();
+  if(!sb) return fallback;
+  try {
+    const { data, error } = await sb.from(table).select("*");
+    if(error) return fallback;
+    return data || fallback;
+  } catch { return fallback; }
+}
+
+async function dbUpsert(table, rows, onConflict="id") {
+  const sb = await getSB();
+  if(!sb) return;
+  try {
+    const arr = Array.isArray(rows) ? rows : [rows];
+    await sb.from(table).upsert(arr, { onConflict });
+  } catch(e) { console.warn("dbUpsert error:", e); }
+}
+
+async function dbDelete(table, id) {
+  const sb = await getSB();
+  if(!sb) return;
+  try { await sb.from(table).delete().eq("id", id); }
+  catch(e) { console.warn("dbDelete error:", e); }
+}
+
+// Subscribe to real-time changes on a table
+async function dbSubscribe(table, callback) {
+  const sb = await getSB();
+  if(!sb) return ()=>{};
+  try {
+    const channel = sb.channel(`rt_${table}`)
+      .on("postgres_changes", { event:"*", schema:"public", table }, callback)
+      .subscribe();
+    return () => sb.removeChannel(channel);
+  } catch { return ()=>{}; }
 }
 
 // ─── AI helpers ───────────────────────────────────────────────────────────────
@@ -966,14 +1045,21 @@ function TodaysTasks({ user, content, setContent, clients }) {
   );
 }
 
-function Dashboard({ user, clients, content, setContent, attendance, dark, plannerEvents={}, calendar=[] }) {
+function Dashboard({ user, users=[], clients, content, setContent, attendance, dark, plannerEvents={}, calendar=[] }) {
   const myContent=user.role==="executive"?content.filter(c=>c.execId===user.id):content;
   const pending=content.filter(c=>(user.role==="admin"&&c.status==="pending_admin")||(user.role==="superadmin"&&(c.status==="pending_superadmin"||c.status==="pending_admin")));
   const todayAtt=attendance.filter(a=>a.date===todayISO());
   const today=todayISO();
   const myEvents=(plannerEvents[user.id]||[]);
-  const upcomingTasks=myEvents.filter(e=>e.date>=today).sort((a,b)=>a.date===b.date?a.startHour-b.startHour:a.date.localeCompare(b.date)).slice(0,5);
+  const upcomingTasks=myEvents
+    .filter(e=>e.date>=today)
+    .sort((a,b)=>a.date===b.date?a.startHour-b.startHour:a.date.localeCompare(b.date))
+    .slice(0,6);
+  const todayTasks=myEvents.filter(e=>e.date===today).sort((a,b)=>a.startHour-b.startHour);
   const unsubmitted=content.filter(c=>{const mine=user.role!=="executive"||c.execId===user.id;return mine&&c.status==="draft";}).slice(0,5);
+  const [quoteIdx,setQuoteIdx]=useState(()=>Math.floor(Math.random()*MOTIVATIONAL_QUOTES.length));
+  useEffect(()=>{const iv=setInterval(()=>setQuoteIdx(p=>(p+1)%MOTIVATIONAL_QUOTES.length),6000);return()=>clearInterval(iv);},[]);
+  const quote=MOTIVATIONAL_QUOTES[quoteIdx];
   return(
     <div>
       {/* Dashboard Banner — wave artwork */}
@@ -984,10 +1070,20 @@ function Dashboard({ user, clients, content, setContent, attendance, dark, plann
         <div className="mural-stats">
           <div className="mural-stat"><div className="mural-stat-val">{clients.filter(c=>c.status==="active").length}</div><div className="mural-stat-lbl">Clients</div></div>
           <div className="mural-stat"><div className="mural-stat-val">{myContent.filter(c=>c.status==="posted").length}</div><div className="mural-stat-lbl">Posted</div></div>
-          {user.role==="superadmin"&&<div className="mural-stat"><div className="mural-stat-val">{todayAtt.length}</div><div className="mural-stat-lbl">Present</div></div>}
+          {user.role==="superadmin"&&<div className="mural-stat" style={{cursor:"pointer"}} onClick={()=>document.getElementById("sa-selfie-panel")?.scrollIntoView({behavior:"smooth"})}><div className="mural-stat-val">{todayAtt.length}</div><div className="mural-stat-lbl">Present ↓</div></div>}
           {(user.role==="admin"||user.role==="superadmin")&&<div className="mural-stat"><div className="mural-stat-val" style={{color:pending.length>0?"#F59E0B":"#4ADE80"}}>{pending.length}</div><div className="mural-stat-lbl">Pending</div></div>}
         </div>
       </div>
+
+      {/* Live Quote Card */}
+      <div style={{margin:"16px 0",padding:"14px 20px",background:"var(--surface)",borderRadius:12,borderLeft:"3px solid var(--accent)",display:"flex",alignItems:"center",gap:16,animation:"fadeIn 0.6s ease"}}>
+        <div style={{fontSize:22,opacity:0.5}}>✦</div>
+        <div style={{flex:1}}>
+          <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:15,fontStyle:"italic",color:"var(--ink)",lineHeight:1.5}}>"{quote.text}"</div>
+          <div style={{fontSize:11,color:"var(--ink-muted)",marginTop:4}}>— {quote.author}</div>
+        </div>
+      </div>
+
       <div className="grid-2">
         <TodaysTasks user={user} content={content} setContent={setContent} clients={clients} />
         <div className="card">
@@ -1001,6 +1097,30 @@ function Dashboard({ user, clients, content, setContent, attendance, dark, plann
           {myContent.length===0&&<p className="text-muted text-sm">No content yet.</p>}
         </div>
       </div>
+    {/* Superadmin: Today's Team Selfies */}
+    {user.role==="superadmin"&&(
+      <div id="sa-selfie-panel" className="card" style={{marginTop:16}}>
+        <h3 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:16,fontWeight:600,marginBottom:16,color:"var(--ink)"}}>📸 Today's Attendance — {todayISO()}</h3>
+        {users.filter(u=>u.role!=="superadmin").length===0&&<p className="text-muted text-sm">No team members yet.</p>}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:12}}>
+          {users.filter(u=>u.role!=="superadmin").map(emp=>{
+            const rec=attendance.find(a=>a.userId===emp.id&&a.date===todayISO());
+            const isPresent=!!rec;
+            return(
+              <div key={emp.id} style={{background:"var(--cream-dark)",borderRadius:12,padding:12,textAlign:"center",border:`2px solid ${isPresent?"var(--success)":"var(--cream-dark)"}`}}>
+                {rec?.selfieIn
+                  ? <img src={rec.selfieIn} style={{width:80,height:64,borderRadius:8,objectFit:"cover",transform:"scaleX(-1)",marginBottom:8}} alt="selfie" />
+                  : <div style={{width:80,height:64,borderRadius:8,background:"var(--surface)",margin:"0 auto 8px",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24}}>{isPresent?"✓":"—"}</div>
+                }
+                <div style={{fontSize:12,fontWeight:600,color:"var(--ink)"}}>{emp.displayName||emp.name}</div>
+                <div style={{fontSize:10,color:isPresent?"var(--success)":"var(--danger)",fontWeight:600,marginTop:2}}>{isPresent?`In ${rec.login}`+( rec.logout?` · Out ${rec.logout}`:""):"Absent"}</div>
+                {rec?.selfieOut&&<img src={rec.selfieOut} style={{width:60,height:48,borderRadius:6,objectFit:"cover",transform:"scaleX(-1)",marginTop:6,opacity:0.8}} alt="out" />}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    )}
     </div>
   );
 }
@@ -1824,12 +1944,17 @@ function HR({ user, leaves, setLeaves, attendance, users }) {
               return(<div key={day} className={`hr-day ${isSel?"selected":""}`} onClick={()=>setSelDay(isSel?null:day)}>
                 <div className="hr-day-num">{day}</div>
                 {employees.map(emp=>{
-                  const pres=att.find(a=>a.userId===emp.id);const leave=lv.find(l=>l.userId===emp.id);
-                  if(leave) return <span key={emp.id} className="hr-day-chip chip-leave">{emp.name.split(" ")[0]}</span>;
-                  if(pres) return <span key={emp.id} className="hr-day-chip chip-present">{emp.name.split(" ")[0]}: {pres.login}</span>;
-                  const dow=new Date(date).getDay();
-                  if(dow!==0&&dow!==6) return <span key={emp.id} className="hr-day-chip chip-absent">{emp.name.split(" ")[0]}</span>;
-                  return null;
+                  const pres=att.find(a=>a.userId===emp.id);
+                  const leave=lv.find(l=>l.userId===emp.id);
+                  const dow=new Date(date+"T12:00").getDay();
+                  const isWeekend=dow===0||dow===6;
+                  const isPast=date<todayISO();
+                  const isToday=date===todayISO();
+                  if(leave) return <span key={emp.id} className="hr-day-chip chip-leave" title="On Leave">{(emp.displayName||emp.name).split(" ")[0]}</span>;
+                  if(pres) return <span key={emp.id} className="hr-day-chip chip-present" title={`In: ${pres.login}${pres.logout?" | Out: "+pres.logout:""}`}>{(emp.displayName||emp.name).split(" ")[0]} ✓</span>;
+                  if(isWeekend) return null;
+                  if(isPast||isToday) return <span key={emp.id} className="hr-day-chip chip-absent" title="Absent">{(emp.displayName||emp.name).split(" ")[0]}</span>;
+                  return null; // future dates — don't mark absent
                 })}
               </div>);
             })}
@@ -1857,14 +1982,26 @@ function HR({ user, leaves, setLeaves, attendance, users }) {
       </div>
     </div>)}
 
-    {isSA&&tab==="attendance"&&(<div className="card" style={{padding:0}}>
-      <table className="table"><thead><tr><th>Member</th><th>Login</th><th>Logout</th><th>Status</th></tr></thead>
-      <tbody>{employees.map(u=>{const r=todayAtt.find(a=>a.userId===u.id);return(
-        <tr key={u.id}><td><div className="flex items-center gap-8"><div className="avatar sm">{u.avatar}</div>{u.name}</div></td>
-        <td style={{color:r?"var(--success)":"var(--ink-muted)"}}>{r?.login||"—"}</td>
-        <td style={{color:r?.logout?"var(--danger)":"var(--ink-muted)"}}>{r?.logout||"—"}</td>
-        <td>{r?<span className="badge badge-success">Present</span>:<span className="badge badge-danger">Absent</span>}</td>
-        </tr>);})}</tbody></table>
+    {isSA&&tab==="attendance"&&(<div>
+      <h3 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:16,fontWeight:600,marginBottom:16,color:"var(--ink)"}}>Today — {todayISO()}</h3>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(170px,1fr))",gap:12,marginBottom:16}}>
+        {employees.map(emp=>{
+          const rec=todayAtt.find(a=>a.userId===emp.id);
+          return(
+            <div key={emp.id} style={{background:"var(--cream-dark)",borderRadius:12,padding:12,textAlign:"center",border:`2px solid ${rec?"#4ADE80":"var(--cream-dark)"}`}}>
+              {rec?.selfieIn
+                ?<img src={rec.selfieIn} style={{width:80,height:64,borderRadius:8,objectFit:"cover",transform:"scaleX(-1)",marginBottom:8}} alt="in" />
+                :<div style={{width:80,height:64,borderRadius:8,background:"var(--surface)",margin:"0 auto 8px",display:"flex",alignItems:"center",justifyContent:"center",fontSize:28}}>{rec?"👤":"—"}</div>
+              }
+              <div style={{fontSize:12,fontWeight:600,color:"var(--ink)"}}>{emp.displayName||emp.name}</div>
+              <div style={{fontSize:10,fontWeight:600,marginTop:2,color:rec?"#4ADE80":"var(--danger)"}}>{rec?`✓ In ${rec.login}`:"Absent"}</div>
+              {rec?.logout&&<div style={{fontSize:10,color:"var(--ink-muted)",marginTop:1}}>Out {rec.logout}</div>}
+              {rec?.selfieOut&&<img src={rec.selfieOut} style={{width:60,height:48,borderRadius:6,objectFit:"cover",transform:"scaleX(-1)",marginTop:6,opacity:0.8}} alt="out" />}
+            </div>
+          );
+        })}
+      </div>
+      {todayAtt.length===0&&<p className="text-muted text-sm">No one has punched in yet today.</p>}
     </div>)}
 
     {(isSA?tab==="leaves":true)&&(<div style={{marginTop:isSA?0:0}}>
@@ -2152,179 +2289,511 @@ function UserLogins({ users, setUsers, currentUser, setCurrentUser }) {
 
 // ─── CHAT PAGE ────────────────────────────────────────────────────────────────
 function ChatPage({ user, users, messages, setMessages, onlineIds }) {
-  const [thread,setThread]=useState(null);const [input,setInput]=useState("");const [call,setCall]=useState(null);
-  const msgEndRef=useRef();
-  const visibleMsgs=thread==="all"?messages.filter(m=>m.toId==="all"):messages.filter(m=>(m.fromId===user.id&&m.toId===thread)||(m.fromId===thread&&m.toId===user.id));
-  useEffect(()=>{ msgEndRef.current?.scrollIntoView({behavior:"smooth"}); },[messages,thread]);
-  function send(){if(!input.trim()||!thread)return;setMessages(p=>[...p,{id:Date.now(),fromId:user.id,toId:thread,text:input.trim(),time:nowStr(),date:todayISO()}]);setInput("");}
-  function startCall(type,participants){setCall({type,participants:[users.find(u=>u.id===user.id),...participants.filter(Boolean)]});}
-  const others=users.filter(u=>u.id!==user.id);
-  const getUser=id=>users.find(u=>u.id===id);
+  const [thread,setThread]   = useState("all");
+  const [input,setInput]     = useState("");
+  const [call,setCall]       = useState(null);
+  const [search,setSearch]   = useState("");
+  const [replyTo,setReplyTo] = useState(null);
+  const [reactions,setReactions] = useState({}); // msgId -> emoji[]
+  const [showEmoji,setShowEmoji] = useState(null); // msgId
+  const msgEndRef = useRef();
+  const inputRef  = useRef();
 
-  return(<div style={{display:"grid",gridTemplateColumns:"280px 1fr",gap:0,height:"calc(100vh - 112px)",margin:"-24px"}}>
-    {call&&<VideoCallModal participants={call.participants} callType={call.type} onEnd={()=>setCall(null)} />}
-    {/* Contacts sidebar */}
-    <div style={{background:"var(--surface)",borderRight:"1px solid var(--border)",display:"flex",flexDirection:"column",height:"100%"}}>
-      <div style={{padding:"16px",borderBottom:"1px solid var(--border)"}}>
-        <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:18,fontWeight:600,color:"var(--ink)"}}>Team Chat</div>
-        <div style={{fontSize:10,color:"var(--ink-muted)",marginTop:2}}>{onlineIds.length} of {users.length} online</div>
-      </div>
-      {/* Colour bar */}
-      <div style={{height:3,background:"linear-gradient(90deg,#C4954A,#E8C88A,#4A7C59,#2E5F8A)"}} />
-      <div style={{overflowY:"auto",flex:1}}>
-        {/* All Hands */}
-        <div className={`chat-contact ${thread==="all"?"active":""}`} onClick={()=>setThread("all")}>
-          <div className="avatar" style={{background:"linear-gradient(135deg,#C4954A,#9B3A3A)",fontSize:13}}>✦</div>
-          <div className="chat-contact-info"><div className="chat-contact-name">All Hands</div><div className="chat-contact-last">Team channel · {users.length} members</div></div>
-          <button className="call-btn call-btn-video" style={{fontSize:9}} onClick={e=>{e.stopPropagation();startCall("video",others);}}>📹</button>
-        </div>
-        {others.map(u=>{
-          const isOnline=onlineIds.includes(u.id);const lastMsg=messages.filter(m=>(m.fromId===u.id&&m.toId===user.id)||(m.fromId===user.id&&m.toId===u.id)).slice(-1)[0];
-          return(<div key={u.id} className={`chat-contact ${thread===u.id?"active":""}`} onClick={()=>setThread(u.id)}>
-            <div style={{position:"relative"}}>
-              <div className="avatar sm" style={{background:u.role==="admin"?"var(--accent)":u.role==="superadmin"?"#943535":"var(--info)"}}>{u.avatar}</div>
-              <div className={`status-dot ${isOnline?"status-online":"status-offline"}`} style={{position:"absolute",bottom:0,right:0,border:"2px solid var(--surface)"}} />
-            </div>
-            <div className="chat-contact-info">
-              <div className="chat-contact-name">{u.displayName||u.username}</div>
-              <div className="chat-contact-last">{isOnline?"● Online":"○ Offline"}</div>
-              {lastMsg&&<div className="chat-contact-last" style={{marginTop:1}}>{lastMsg.text.slice(0,28)}{lastMsg.text.length>28?"…":""}</div>}
-            </div>
-            <button className="call-btn call-btn-video" style={{fontSize:9}} onClick={e=>{e.stopPropagation();startCall("video",[u]);}}>📹</button>
-          </div>);
-        })}
-      </div>
-    </div>
+  const EMOJI_QUICK = ["👍","❤️","😂","🎉","🔥","✅"];
 
-    {/* Message area */}
-    <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
-      {!thread?(
-        <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:16,background:"var(--cream-dark)"}}>
-          {/* Decorative mural */}
-          <svg width="200" height="200" viewBox="0 0 200 200" style={{opacity:0.3}}>
-            <circle cx="100" cy="100" r="80" fill="none" stroke="#C4954A" strokeWidth="1"/>
-            <circle cx="100" cy="100" r="50" fill="none" stroke="#E8C88A" strokeWidth="0.5"/>
-            <circle cx="100" cy="100" r="110" fill="none" stroke="#C4954A" strokeWidth="0.3"/>
-            <text x="100" y="108" textAnchor="middle" fontSize="32" fill="#C4954A" fontFamily="serif">💬</text>
-          </svg>
-          <p style={{fontFamily:"'Cormorant Garamond',serif",fontSize:20,color:"var(--ink)"}}>Select a conversation</p>
-          <p className="text-muted text-sm">Message a teammate or open All Hands</p>
+  const visibleMsgs = thread==="all"
+    ? messages.filter(m=>m.toId==="all")
+    : messages.filter(m=>(m.fromId===user.id&&String(m.toId)===String(thread))||(String(m.fromId)===String(thread)&&m.toId===user.id));
+
+  // Unread counts per thread
+  const unreadCount = (tid) => {
+    const msgs = tid==="all"
+      ? messages.filter(m=>m.toId==="all")
+      : messages.filter(m=>String(m.fromId)===String(tid)&&m.toId===user.id);
+    return msgs.filter(m=>!m.readBy?.includes(user.id)).length;
+  };
+
+  useEffect(()=>{ msgEndRef.current?.scrollIntoView({behavior:"smooth"}); },[visibleMsgs.length,thread]);
+
+  // Mark as read when thread opened
+  useEffect(()=>{
+    if(!thread) return;
+    setMessages(prev=>prev.map(m=>{
+      const isForMe = m.toId==="all" || (String(m.fromId)===String(thread)&&m.toId===user.id);
+      if(isForMe&&!m.readBy?.includes(user.id)) return {...m,readBy:[...(m.readBy||[]),user.id]};
+      return m;
+    }));
+  },[thread]);
+
+  function send(){
+    if(!input.trim()) return;
+    const msg = {
+      id:Date.now(), fromId:user.id, toId:thread,
+      text:input.trim(), time:nowStr(), date:todayISO(),
+      replyTo:replyTo?{id:replyTo.id,text:replyTo.text,from:replyTo.fromId}:null,
+      readBy:[user.id]
+    };
+    setMessages(p=>[...p,msg]);
+    setInput(""); setReplyTo(null);
+  }
+
+  function addReaction(msgId, emoji){
+    setReactions(prev=>{
+      const cur = prev[msgId]||[];
+      const exists = cur.find(r=>r.emoji===emoji&&r.userId===user.id);
+      if(exists) return {...prev,[msgId]:cur.filter(r=>!(r.emoji===emoji&&r.userId===user.id))};
+      return {...prev,[msgId]:[...cur,{emoji,userId:user.id}]};
+    });
+    setShowEmoji(null);
+  }
+
+  function startCall(type,participants){
+    setCall({type,participants:[users.find(u=>u.id===user.id),...participants.filter(Boolean)]});
+  }
+
+  const others  = users.filter(u=>u.id!==user.id);
+  const getUser = id=>users.find(u=>u.id===id);
+  const threadUser = thread!=="all" ? getUser(thread) : null;
+  const threadName = thread==="all" ? "All Hands" : (threadUser?.displayName||threadUser?.name||"Unknown");
+
+  // Filtered contacts for search
+  const filteredOthers = others.filter(u=>(u.displayName||u.name).toLowerCase().includes(search.toLowerCase()));
+
+  // Group messages by date
+  function groupByDate(msgs){
+    const groups = [];
+    let lastDate = null;
+    msgs.forEach(m=>{
+      if(m.date!==lastDate){ groups.push({type:"date",date:m.date}); lastDate=m.date; }
+      groups.push({type:"msg",...m});
+    });
+    return groups;
+  }
+  const grouped = groupByDate(visibleMsgs);
+
+  return(
+    <div style={{display:"grid",gridTemplateColumns:"260px 1fr",height:"calc(100vh - 112px)",margin:"-24px",overflow:"hidden"}}>
+      {call&&<VideoCallModal participants={call.participants} callType={call.type} onEnd={()=>setCall(null)} />}
+
+      {/* ── LEFT SIDEBAR ── */}
+      <div style={{background:"var(--surface)",borderRight:"1px solid var(--border)",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+
+        {/* Header */}
+        <div style={{padding:"14px 16px",borderBottom:"1px solid var(--border)"}}>
+          <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:20,fontWeight:700,color:"var(--ink)",marginBottom:8}}>Chat</div>
+          <input
+            placeholder="🔍 Search people…"
+            value={search} onChange={e=>setSearch(e.target.value)}
+            style={{width:"100%",padding:"7px 11px",borderRadius:8,border:"1px solid var(--border)",background:"var(--cream-dark)",fontSize:12,color:"var(--ink)",outline:"none",boxSizing:"border-box"}}
+          />
         </div>
-      ):(
-        <>
-          {/* Thread header */}
-          <div style={{padding:"12px 18px",borderBottom:"1px solid var(--border)",display:"flex",alignItems:"center",gap:12,background:"var(--surface)"}}>
-            {thread==="all"?(
-              <div className="avatar" style={{background:"linear-gradient(135deg,#C4954A,#9B3A3A)",fontSize:13}}>✦</div>
-            ):(
-              <div style={{position:"relative"}}>
-                <div className="avatar" style={{background:getUser(thread)?.role==="admin"?"var(--accent)":"var(--info)"}}>{getUser(thread)?.avatar}</div>
-                <div className={`status-dot ${onlineIds.includes(thread)?"status-online":"status-offline"}`} style={{position:"absolute",bottom:0,right:0,border:"2px solid var(--surface)"}} />
+
+        {/* Threads */}
+        <div style={{overflowY:"auto",flex:1}}>
+          {/* All Hands */}
+          <div
+            onClick={()=>setThread("all")}
+            style={{padding:"10px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:10,
+              background:thread==="all"?"var(--accent-pale)":"transparent",
+              borderLeft:thread==="all"?"3px solid var(--accent)":"3px solid transparent"
+            }}>
+            <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#C4954A,#9B3A3A)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>✦</div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontWeight:600,fontSize:13,color:"var(--ink)"}}>All Hands</div>
+              <div style={{fontSize:11,color:"var(--ink-muted)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                {messages.filter(m=>m.toId==="all").slice(-1)[0]?.text||"Team channel"}
               </div>
-            )}
-            <div style={{flex:1}}>
-              <div style={{fontWeight:600,fontSize:14,color:"var(--ink)"}}>{thread==="all"?"All Hands":(getUser(thread)?.displayName||getUser(thread)?.username)}</div>
-              <div style={{fontSize:10,color:"var(--ink-muted)"}}>{thread==="all"?`${onlineIds.length} active`:onlineIds.includes(thread)?"● Online":"○ Offline"}</div>
             </div>
-            <button className="call-btn call-btn-audio" onClick={()=>startCall("audio",thread==="all"?others:[getUser(thread)])} title="Audio Call">📞</button>
-            <button className="call-btn call-btn-video" onClick={()=>startCall("video",thread==="all"?others:[getUser(thread)])} title="Video Meet">📹</button>
+            {unreadCount("all")>0&&<span style={{background:"var(--accent)",color:"white",borderRadius:10,fontSize:9,fontWeight:700,padding:"2px 6px",flexShrink:0}}>{unreadCount("all")}</span>}
           </div>
-          {/* Messages */}
-          <div style={{flex:1,overflowY:"auto",padding:"16px 18px",display:"flex",flexDirection:"column",gap:10,background:"var(--cream-dark)"}}>
-            {visibleMsgs.length===0&&<div style={{textAlign:"center",color:"var(--ink-muted)",fontSize:12,marginTop:20}}>Start the conversation ✦</div>}
-            {visibleMsgs.map(m=>{
-              const isMe=m.fromId===user.id;const sender=getUser(m.fromId);
-              return(<div key={m.id} style={{display:"flex",flexDirection:"column",alignItems:isMe?"flex-end":"flex-start"}}>
-                {!isMe&&<div style={{fontSize:10,color:"var(--ink-muted)",marginBottom:2}}>{sender?.displayName||sender?.username}</div>}
-                <div className={`chat-bubble ${isMe?"mine":"theirs"}`}>{m.text}<div className="chat-bubble-time">{m.time}</div></div>
-              </div>);
-            })}
-            <div ref={msgEndRef} />
+
+          {/* Separator */}
+          <div style={{fontSize:9,fontWeight:700,letterSpacing:2,textTransform:"uppercase",color:"var(--ink-muted)",padding:"10px 14px 4px"}}>Direct Messages</div>
+
+          {filteredOthers.map(u=>{
+            const isOnline=onlineIds.includes(u.id);
+            const lastMsg=messages.filter(m=>(String(m.fromId)===String(u.id)&&m.toId===user.id)||(m.fromId===user.id&&String(m.toId)===String(u.id))).slice(-1)[0];
+            const unread=unreadCount(u.id);
+            const isActive=String(thread)===String(u.id);
+            return(
+              <div key={u.id} onClick={()=>setThread(u.id)}
+                style={{padding:"9px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:10,
+                  background:isActive?"var(--accent-pale)":"transparent",
+                  borderLeft:isActive?"3px solid var(--accent)":"3px solid transparent"
+                }}>
+                <div style={{position:"relative",flexShrink:0}}>
+                  <div style={{width:36,height:36,borderRadius:10,background:u.role==="admin"?"var(--accent)":u.role==="superadmin"?"#943535":"var(--info)",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,color:"white",fontSize:13}}>{u.avatar}</div>
+                  <div style={{position:"absolute",bottom:-1,right:-1,width:10,height:10,borderRadius:"50%",background:isOnline?"#4ADE80":"#6B7280",border:"2px solid var(--surface)"}} />
+                </div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:unread?700:500,fontSize:13,color:"var(--ink)"}}>{u.displayName||u.name}</div>
+                  <div style={{fontSize:11,color:"var(--ink-muted)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                    {lastMsg?lastMsg.text:isOnline?"● Online":"○ Offline"}
+                  </div>
+                </div>
+                {unread>0&&<span style={{background:"var(--accent)",color:"white",borderRadius:10,fontSize:9,fontWeight:700,padding:"2px 6px",flexShrink:0}}>{unread}</span>}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── MAIN CHAT AREA ── */}
+      <div style={{display:"flex",flexDirection:"column",height:"100%",overflow:"hidden"}}>
+
+        {/* Thread header */}
+        <div style={{padding:"12px 20px",borderBottom:"1px solid var(--border)",background:"var(--surface)",display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
+          {thread==="all"
+            ? <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#C4954A,#9B3A3A)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>✦</div>
+            : <div style={{position:"relative"}}>
+                <div style={{width:36,height:36,borderRadius:10,background:threadUser?.role==="admin"?"var(--accent)":"var(--info)",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,color:"white",fontSize:13}}>{threadUser?.avatar}</div>
+                <div style={{position:"absolute",bottom:-1,right:-1,width:10,height:10,borderRadius:"50%",background:onlineIds.includes(thread)?"#4ADE80":"#6B7280",border:"2px solid var(--surface)"}} />
+              </div>
+          }
+          <div style={{flex:1}}>
+            <div style={{fontWeight:700,fontSize:14,color:"var(--ink)"}}>{threadName}</div>
+            <div style={{fontSize:11,color:"var(--ink-muted)"}}>
+              {thread==="all"?`${users.length} members`:(onlineIds.includes(thread)?"● Online now":"○ Offline")}
+            </div>
           </div>
-          {/* Input */}
-          <div style={{padding:"12px 16px",borderTop:"1px solid var(--border)",display:"flex",gap:8,background:"var(--surface)"}}>
-            <input className="chat-input" style={{flex:1,borderRadius:8,padding:"9px 14px"}} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} placeholder={`Message ${thread==="all"?"all hands":(getUser(thread)?.displayName||getUser(thread)?.username)}…`} />
-            <button className="btn btn-accent" onClick={send}>Send ➤</button>
+          <button onClick={()=>startCall("audio",thread==="all"?others:[threadUser])} title="Audio Call"
+            style={{background:"none",border:"1px solid var(--border)",borderRadius:8,padding:"7px 10px",cursor:"pointer",fontSize:16}}>📞</button>
+          <button onClick={()=>startCall("video",thread==="all"?others:[threadUser])} title="Video Call"
+            style={{background:"none",border:"1px solid var(--border)",borderRadius:8,padding:"7px 10px",cursor:"pointer",fontSize:16}}>📹</button>
+        </div>
+
+        {/* Messages */}
+        <div style={{flex:1,overflowY:"auto",padding:"16px 20px",display:"flex",flexDirection:"column",gap:2}} onClick={()=>setShowEmoji(null)}>
+          {visibleMsgs.length===0&&(
+            <div style={{textAlign:"center",margin:"auto",color:"var(--ink-muted)"}}>
+              <div style={{fontSize:40,marginBottom:12}}>💬</div>
+              <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:18}}>Start the conversation</div>
+              <div style={{fontSize:12,marginTop:4}}>Be the first to say something ✦</div>
+            </div>
+          )}
+          {grouped.map((item,idx)=>{
+            if(item.type==="date") return(
+              <div key={idx} style={{textAlign:"center",margin:"12px 0",display:"flex",alignItems:"center",gap:10}}>
+                <div style={{flex:1,height:1,background:"var(--border)"}} />
+                <span style={{fontSize:10,color:"var(--ink-muted)",fontWeight:600,letterSpacing:1,textTransform:"uppercase"}}>
+                  {item.date===todayISO()?"Today":item.date}
+                </span>
+                <div style={{flex:1,height:1,background:"var(--border)"}} />
+              </div>
+            );
+            const isMe=item.fromId===user.id;
+            const sender=getUser(item.fromId);
+            const replyMsg=item.replyTo?messages.find(m=>m.id===item.replyTo.id):null;
+            const msgReactions=reactions[item.id]||[];
+            // Group reactions by emoji
+            const reactionGroups={};
+            msgReactions.forEach(r=>{ reactionGroups[r.emoji]=(reactionGroups[r.emoji]||0)+1; });
+            return(
+              <div key={item.id}
+                style={{display:"flex",flexDirection:isMe?"row-reverse":"row",gap:8,alignItems:"flex-end",marginBottom:4}}
+                onMouseEnter={()=>{}}
+              >
+                {!isMe&&<div style={{width:28,height:28,borderRadius:7,background:sender?.role==="admin"?"var(--accent)":"var(--info)",display:"flex",alignItems:"center",justifyContent:"center",color:"white",fontSize:11,fontWeight:700,flexShrink:0,marginBottom:4}}>{sender?.avatar}</div>}
+                <div style={{maxWidth:"68%"}}>
+                  {!isMe&&<div style={{fontSize:10,color:"var(--ink-muted)",marginBottom:2,fontWeight:600}}>{sender?.displayName||sender?.name}</div>}
+                  {/* Reply preview */}
+                  {item.replyTo&&(
+                    <div style={{background:"var(--cream-dark)",borderLeft:"3px solid var(--accent)",borderRadius:4,padding:"4px 8px",marginBottom:4,fontSize:11,color:"var(--ink-muted)"}}>
+                      ↩ {item.replyTo.text?.slice(0,60)}{item.replyTo.text?.length>60?"…":""}
+                    </div>
+                  )}
+                  <div style={{position:"relative",display:"inline-block",maxWidth:"100%"}}>
+                    <div style={{
+                      padding:"9px 13px",borderRadius:isMe?"14px 14px 4px 14px":"14px 14px 14px 4px",
+                      background:isMe?"var(--accent)":"var(--surface)",
+                      color:isMe?"white":"var(--ink)",
+                      fontSize:13,lineHeight:1.5,wordBreak:"break-word",
+                      border:isMe?"none":"1px solid var(--border)"
+                    }}>
+                      {item.text}
+                      <span style={{fontSize:9,opacity:0.6,marginLeft:8,whiteSpace:"nowrap"}}>{item.time}</span>
+                      {isMe&&item.readBy?.length>1&&<span style={{fontSize:9,opacity:0.7,marginLeft:4}}>✓✓</span>}
+                    </div>
+                    {/* Hover actions */}
+                    <div style={{position:"absolute",top:-28,right:isMe?0:"auto",left:isMe?"auto":0,display:"flex",gap:3,opacity:0,transition:"opacity 0.15s"}}
+                      className="msg-actions">
+                      <button onClick={e=>{e.stopPropagation();setShowEmoji(showEmoji===item.id?null:item.id);}}
+                        style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:6,padding:"2px 6px",cursor:"pointer",fontSize:12}}>😊</button>
+                      <button onClick={()=>setReplyTo(item)}
+                        style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:6,padding:"2px 6px",cursor:"pointer",fontSize:11}}>↩</button>
+                    </div>
+                    {/* Emoji picker */}
+                    {showEmoji===item.id&&(
+                      <div style={{position:"absolute",bottom:"100%",right:isMe?0:"auto",left:isMe?"auto":0,zIndex:100,background:"var(--surface)",border:"1px solid var(--border)",borderRadius:10,padding:"6px 10px",display:"flex",gap:6,boxShadow:"0 4px 16px rgba(0,0,0,0.12)"}}>
+                        {EMOJI_QUICK.map(em=><span key={em} onClick={e=>{e.stopPropagation();addReaction(item.id,em);}} style={{cursor:"pointer",fontSize:18,lineHeight:1}}>{em}</span>)}
+                      </div>
+                    )}
+                  </div>
+                  {/* Reactions */}
+                  {Object.keys(reactionGroups).length>0&&(
+                    <div style={{display:"flex",gap:4,marginTop:4,flexWrap:"wrap"}}>
+                      {Object.entries(reactionGroups).map(([em,count])=>(
+                        <span key={em} onClick={()=>addReaction(item.id,em)}
+                          style={{background:"var(--cream-dark)",border:"1px solid var(--border)",borderRadius:12,padding:"2px 7px",fontSize:12,cursor:"pointer"}}>
+                          {em} {count>1?count:""}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+          <div ref={msgEndRef} />
+        </div>
+
+        {/* Reply banner */}
+        {replyTo&&(
+          <div style={{padding:"8px 20px",background:"var(--cream-dark)",borderTop:"1px solid var(--border)",display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
+            <div style={{flex:1,fontSize:12,color:"var(--ink-muted)",borderLeft:"3px solid var(--accent)",paddingLeft:8}}>
+              ↩ Replying to: <em>{replyTo.text?.slice(0,60)}</em>
+            </div>
+            <button onClick={()=>setReplyTo(null)} style={{background:"none",border:"none",cursor:"pointer",color:"var(--danger)",fontSize:16}}>✕</button>
           </div>
-        </>
-      )}
+        )}
+
+        {/* Input bar */}
+        <div style={{padding:"12px 20px",borderTop:"1px solid var(--border)",background:"var(--surface)",display:"flex",gap:10,alignItems:"center",flexShrink:0}}>
+          <input
+            ref={inputRef}
+            className="chat-input"
+            style={{flex:1,borderRadius:22,padding:"10px 16px",fontSize:13,border:"1px solid var(--border)",background:"var(--cream-dark)",color:"var(--ink)",outline:"none"}}
+            value={input}
+            onChange={e=>setInput(e.target.value)}
+            onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&(e.preventDefault(),send())}
+            placeholder={`Message ${threadName}…`}
+          />
+          <button onClick={send} disabled={!input.trim()}
+            style={{background:input.trim()?"var(--accent)":"var(--border)",color:"white",border:"none",borderRadius:22,padding:"10px 18px",cursor:input.trim()?"pointer":"default",fontSize:13,fontWeight:600,transition:"background 0.2s"}}>
+            Send ➤
+          </button>
+        </div>
+      </div>
+
+      <style>{`
+        .msg-actions { opacity: 0; }
+        div:hover > div > .msg-actions { opacity: 1; }
+      `}</style>
     </div>
-  </div>);
+  );
 }
+
 
 // ─── APP ROOT ─────────────────────────────────────────────────────────────────
 export default function App() {
-  // ── All state persisted to localStorage so nothing resets on refresh ──────
+  // ── State ──────────────────────────────────────────────────────────────────
   const [users,setUsersRaw]   = useState(()=>lsGet("flow_users", INITIAL_USERS));
   const [user,setUser]         = useState(null);
   const [active,setActive]     = useState("dashboard");
   const [dark,setDark]         = useState(()=>lsGet("flow_dark", false));
-  const [clients,setClientsRaw]   = useState(()=>lsGet("flow_clients", initialClients));
-  const [content,setContentRaw]   = useState(()=>lsGet("flow_content", initialContent));
-  const [calendar,setCalendarRaw] = useState(()=>lsGet("flow_calendar", initialCalendar));
-  const [leaves,setLeavesRaw]     = useState(()=>lsGet("flow_leaves", initialLeaves));
-  const [attendance,setAttendanceRaw] = useState(()=>lsGet("flow_attendance", initialAttendance));
-  const [messages,setMessagesRaw] = useState(()=>lsGet("flow_messages", initialMessages));
-  const [plannerEvents,setPlannerEventsRaw] = useState(()=>lsGet("flow_planner", initialPlannerEvents));
+  const [clients,setClientsRaw]   = useState(()=>lsGet("flow_clients", []));
+  const [content,setContentRaw]   = useState(()=>lsGet("flow_content", []));
+  const [calendar,setCalendarRaw] = useState(()=>lsGet("flow_calendar", []));
+  const [leaves,setLeavesRaw]     = useState(()=>lsGet("flow_leaves", []));
+  const [attendance,setAttendanceRaw] = useState(()=>lsGet("flow_attendance", []));
+  const [messages,setMessagesRaw] = useState(()=>lsGet("flow_messages", []));
+  const [plannerEvents,setPlannerEventsRaw] = useState(()=>lsGet("flow_planner", {}));
   const [onlineIds,setOnlineIds]  = useState([]);
   const [phase,setPhase]          = useState(0);
-  const [chatNotif,setChatNotif]  = useState(null); // {text, from} for popup
+  const [chatNotif,setChatNotif]  = useState(null);
+  const [dbReady,setDbReady]      = useState(false); // true once Supabase loaded
+  const currentUserRef            = useRef(null);
 
-  // ── Persist-aware setters ──────────────────────────────────────────────────
-  function setUsers(u)      { const v=typeof u==="function"?u(users):u;      lsSet("flow_users",v);      setUsersRaw(v); }
-  function setClients(u)    { const v=typeof u==="function"?u(clients):u;    lsSet("flow_clients",v);    setClientsRaw(v); }
-  function setContent(u)    { const v=typeof u==="function"?u(content):u;    lsSet("flow_content",v);    setContentRaw(v); }
-  function setCalendar(u)   { const v=typeof u==="function"?u(calendar):u;   lsSet("flow_calendar",v);   setCalendarRaw(v); }
-  function setLeaves(u)     { const v=typeof u==="function"?u(leaves):u;     lsSet("flow_leaves",v);     setLeavesRaw(v); }
-  function setAttendance(u) { const v=typeof u==="function"?u(attendance):u; lsSet("flow_attendance",v); setAttendanceRaw(v); }
-  function setMessages(u)   {
-    const prev = messages;
-    const v=typeof u==="function"?u(prev):u;
-    if(v.length > prev.length) {
-      const newMsg = v[v.length-1];
-      // broadcast to other tabs
-      try{ if(typeof BroadcastChannel!=="undefined") new BroadcastChannel("flow_messages_sync").postMessage({type:"new_message",msg:newMsg}); }catch{}
-      // show notification if message is from someone else
-      if(user && newMsg.fromId !== user.id) {
-        const sender = users.find(x=>x.id===newMsg.fromId);
-        setChatNotif({text:newMsg.text, from:sender?.displayName||sender?.name||"Someone"});
-        setTimeout(()=>setChatNotif(null), 4000);
-      }
-    }
-    lsSet("flow_messages",v);
-    setMessagesRaw(v);
-  }
-  function setPlannerEvents(u) { const v=typeof u==="function"?u(plannerEvents):u; lsSet("flow_planner",v); setPlannerEventsRaw(v); }
-
-  // ── BroadcastChannel: sync messages across browser tabs ─────────────────────
+  // ── Load ALL data from Supabase on mount ───────────────────────────────────
   useEffect(()=>{
-    let bc = null;
-    try {
-      bc = new BroadcastChannel("flow_messages_sync");
-      bc.onmessage = (e) => {
-        if(e.data?.type==="new_message") {
-          const msg = e.data.msg;
-          setMessagesRaw(prev=>{
-            if(prev.find(m=>m.id===msg.id)) return prev;
-            const next=[...prev,msg];
-            lsSet("flow_messages",next);
-            return next;
-          });
-          if(user && msg.fromId!==user.id) {
-            const sender=users.find(x=>x.id===msg.fromId);
-            setChatNotif({text:msg.text,from:sender?.displayName||sender?.name||"Someone"});
-            setTimeout(()=>setChatNotif(null),4000);
-          }
-        }
-      };
-    } catch(e){ /* BroadcastChannel not available */ }
-    return ()=>{ try{ bc?.close(); }catch{} };
-  },[user,users]);
+    async function loadAll() {
+      const sb = await getSB();
+      if(!sb) { setDbReady(true); return; } // offline mode — use localStorage
 
-  // ── When user logs in, mark them online ───────────────────────────────────
+      const [u,cl,co,ca,lv,at,ms,pl] = await Promise.all([
+        dbGet("flow_users",    lsGet("flow_users", INITIAL_USERS)),
+        dbGet("flow_clients",  []),
+        dbGet("flow_content",  []),
+        dbGet("flow_calendar", []),
+        dbGet("flow_leaves",   []),
+        dbGet("flow_attendance",[]),
+        dbGet("flow_messages", []),
+        dbGet("flow_planner",  []),
+      ]);
+
+      // Users: merge DB with INITIAL_USERS so roles/passwords are always available
+      const mergedUsers = INITIAL_USERS.map(iu=>{
+        const dbU = u.find(x=>x.id===iu.id);
+        return dbU ? {...iu,...dbU} : iu;
+      });
+      setUsersRaw(mergedUsers);      lsSet("flow_users", mergedUsers);
+      setClientsRaw(cl);             lsSet("flow_clients", cl);
+      setContentRaw(co);             lsSet("flow_content", co);
+      setCalendarRaw(ca);            lsSet("flow_calendar", ca);
+      setLeavesRaw(lv);              lsSet("flow_leaves", lv);
+      setAttendanceRaw(at);          lsSet("flow_attendance", at);
+      setMessagesRaw(ms);            lsSet("flow_messages", ms);
+
+      // Planner: stored as array of {userId, events:[]}
+      const plannerMap = {};
+      pl.forEach(row=>{ plannerMap[row.userId] = row.events||[]; });
+      setPlannerEventsRaw(plannerMap); lsSet("flow_planner", plannerMap);
+
+      setDbReady(true);
+    }
+    loadAll();
+  },[]);
+
+  // ── Real-time subscriptions (all tables) ───────────────────────────────────
+  useEffect(()=>{
+    if(!dbReady) return;
+    const unsubs = [];
+
+    // Helper: refresh a whole table into state
+    async function refreshTable(table, setter, lsKey, transform) {
+      const data = await dbGet(table, []);
+      const val = transform ? transform(data) : data;
+      setter(val); lsSet(lsKey, val);
+    }
+
+    const tables = [
+      ["flow_clients",   setClientsRaw,   "flow_clients",   null],
+      ["flow_content",   setContentRaw,   "flow_content",   null],
+      ["flow_calendar",  setCalendarRaw,  "flow_calendar",  null],
+      ["flow_leaves",    setLeavesRaw,    "flow_leaves",    null],
+      ["flow_attendance",setAttendanceRaw,"flow_attendance", null],
+      ["flow_messages",  (data)=>{
+        setMessagesRaw(prev=>{
+          // Show notification for new messages
+          const newMsgs = data.filter(m=>!prev.find(p=>p.id===m.id));
+          newMsgs.forEach(msg=>{
+            const cu = currentUserRef.current;
+            if(cu && msg.fromId!==cu.id && (msg.toId==="all"||msg.toId===cu.id)) {
+              const sender = lsGet("flow_users",INITIAL_USERS).find(x=>x.id===msg.fromId);
+              setChatNotif({text:msg.text,from:sender?.displayName||sender?.name||"Someone"});
+              setTimeout(()=>setChatNotif(null),4000);
+            }
+          });
+          lsSet("flow_messages",data);
+          return data;
+        });
+      }, "flow_messages", null],
+      ["flow_users",     (data)=>{
+        const mergedUsers = INITIAL_USERS.map(iu=>{
+          const dbU = data.find(x=>x.id===iu.id);
+          return dbU ? {...iu,...dbU} : iu;
+        });
+        setUsersRaw(mergedUsers); lsSet("flow_users",mergedUsers);
+      }, "flow_users", null],
+    ];
+
+    tables.forEach(([table, setter, lsKey, transform])=>{
+      if(typeof setter === "function" && typeof setter !== "object") {
+        dbSubscribe(table, ()=>refreshTable(table, setter, lsKey, transform))
+          .then(unsub=>unsubs.push(unsub));
+      } else {
+        // setter is actually a callback function for special handling
+        dbSubscribe(table, async ()=>{ const data=await dbGet(table,[]); setter(data); })
+          .then(unsub=>unsubs.push(unsub));
+      }
+    });
+
+    // Planner subscription
+    dbSubscribe("flow_planner", async ()=>{
+      const pl = await dbGet("flow_planner",[]);
+      const plannerMap={};
+      pl.forEach(row=>{ plannerMap[row.userId]=row.events||[]; });
+      setPlannerEventsRaw(plannerMap); lsSet("flow_planner",plannerMap);
+    }).then(unsub=>unsubs.push(unsub));
+
+    return ()=>unsubs.forEach(fn=>{ try{fn();}catch{} });
+  },[dbReady]);
+
+  // ── Persist-aware setters (write to both Supabase + localStorage) ──────────
+  async function setUsers(u) {
+    const v=typeof u==="function"?u(users):u;
+    lsSet("flow_users",v); setUsersRaw(v);
+    // Upsert each user row
+    for(const usr of v) await dbUpsert("flow_users", {id:usr.id,name:usr.name,displayName:usr.displayName,username:usr.username,password:usr.password,role:usr.role,avatar:usr.avatar,email:usr.email});
+  }
+  async function setClients(u) {
+    const v=typeof u==="function"?u(clients):u;
+    lsSet("flow_clients",v); setClientsRaw(v);
+    await dbUpsert("flow_clients", v);
+  }
+  async function setContent(u) {
+    const v=typeof u==="function"?u(content):u;
+    lsSet("flow_content",v); setContentRaw(v);
+    await dbUpsert("flow_content", v);
+  }
+  async function setCalendar(u) {
+    const v=typeof u==="function"?u(calendar):u;
+    lsSet("flow_calendar",v); setCalendarRaw(v);
+    await dbUpsert("flow_calendar", v);
+  }
+  async function setLeaves(u) {
+    const v=typeof u==="function"?u(leaves):u;
+    lsSet("flow_leaves",v); setLeavesRaw(v);
+    await dbUpsert("flow_leaves", v);
+  }
+  async function setAttendance(u) {
+    const v=typeof u==="function"?u(attendance):u;
+    lsSet("flow_attendance",v); setAttendanceRaw(v);
+    // Upsert each attendance row individually (unique on userId+date)
+    const arr=Array.isArray(v)?v:[v];
+    for(const row of arr) {
+      if(row.userId && row.date) await dbUpsert("flow_attendance", row, "id");
+    }
+  }
+  async function setMessages(u) {
+    const prev=messages;
+    const v=typeof u==="function"?u(prev):u;
+    lsSet("flow_messages",v); setMessagesRaw(v);
+    if(v.length>prev.length) {
+      const newMsg=v[v.length-1];
+      await dbUpsert("flow_messages", newMsg);
+    }
+  }
+  async function setPlannerEvents(u) {
+    const v=typeof u==="function"?u(plannerEvents):u;
+    lsSet("flow_planner",v); setPlannerEventsRaw(v);
+    // Store as rows: {userId, events:[]}
+    const rows=Object.entries(v).map(([uid,evs])=>({userId:parseInt(uid),events:evs,id:parseInt(uid)}));
+    for(const row of rows) await dbUpsert("flow_planner", row, "userId");
+  }
+
+  // ── Online presence via Supabase realtime ──────────────────────────────────
+  useEffect(()=>{
+    if(!user||!dbReady) return;
+    currentUserRef.current = user;
+    setOnlineIds([user.id]);
+
+    // Broadcast presence
+    getSB().then(sb=>{
+      if(!sb) return;
+      try {
+        const channel = sb.channel("online_presence")
+          .on("presence","sync",()=>{
+            const state=channel.presenceState();
+            const ids=Object.values(state).flatMap(s=>s.map(p=>p.userId)).filter(Boolean);
+            setOnlineIds([...new Set(ids)]);
+          })
+          .subscribe(async (status)=>{
+            if(status==="SUBSCRIBED") {
+              await channel.track({userId:user.id,name:user.displayName||user.name});
+            }
+          });
+        return ()=>sb.removeChannel(channel);
+      } catch {}
+    });
+  },[user,dbReady]);
+
+  // ── When user logs in ──────────────────────────────────────────────────────
   function handleLogin(loggedUser) {
-    setUser(loggedUser);
-    setOnlineIds([loggedUser.id]);
+    // Re-read latest user data from state (may have been updated)
+    const freshUser = users.find(u=>u.id===loggedUser.id)||loggedUser;
+    setUser(freshUser);
+    currentUserRef.current = freshUser;
   }
 
   // ── Wave animation ─────────────────────────────────────────────────────────
@@ -2345,6 +2814,15 @@ export default function App() {
   const pendingCount=content.filter(c=>(user?.role==="admin"&&c.status==="pending_admin")||(user?.role==="superadmin"&&(c.status==="pending_superadmin"||c.status==="pending_admin"))).length;
 
   // ── Login screen ───────────────────────────────────────────────────────────
+  // Show loading while Supabase fetches data
+  if(!dbReady) return (
+    <><style>{getStyles(dark)}</style>
+    <div style={{height:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"var(--cream)",fontFamily:"'Cormorant Garamond',serif"}}>
+      <div style={{fontSize:36,marginBottom:16,animation:"pulse 1.5s ease-in-out infinite"}}>◐</div>
+      <div style={{fontSize:22,color:"var(--ink)",fontWeight:600}}>Flow by Anecdote</div>
+      <div style={{fontSize:13,color:"var(--ink-muted)",marginTop:8}}>Connecting to database…</div>
+    </div></>
+  );
   if(!user) return <><style>{getStyles(dark)}</style><LoginPage onLogin={handleLogin} dark={dark} phase={phase} users={users} /></>;
 
   return(
@@ -2379,7 +2857,7 @@ export default function App() {
             </div>
           </div>
           <div className="content" style={{paddingRight:0}}>
-            {active==="dashboard"&&<div style={{paddingRight:24}}><Dashboard user={user} clients={clients} content={content} setContent={setContent} attendance={attendance} dark={dark} plannerEvents={plannerEvents} calendar={calendar} /></div>}
+            {active==="dashboard"&&<div style={{paddingRight:24}}><Dashboard user={user} users={users} clients={clients} content={content} setContent={setContent} attendance={attendance} dark={dark} plannerEvents={plannerEvents} calendar={calendar} /></div>}
             {active==="clients"&&<div style={{paddingRight:24}}><Clients user={user} clients={clients} setClients={setClients} /></div>}
             {active==="calendar"&&<div style={{paddingRight:24}}><ContentCalendar user={user} clients={clients} calendar={calendar} setCalendar={setCalendar} users={users} /></div>}
             {active==="content"&&<div style={{paddingRight:24}}><Content user={user} clients={clients} content={content} setContent={setContent} users={users} /></div>}
