@@ -2772,11 +2772,17 @@ export default function App() {
       .subscribe(async(status)=>{
         console.log("Presence status:",status);
         if(status==="SUBSCRIBED") {
-          const u = currentUserRef.current || lsGet("flow_user",null);
-          if(u) {
-            await presenceCh.track({userId:Number(u.id)});
-            console.log("Presence tracked for user:",u.id);
+          // Try immediately, then retry a few times if user not available yet
+          async function doTrack(retries) {
+            const u = currentUserRef.current || lsGet("flow_user",null);
+            if(u) {
+              await presenceCh.track({userId:Number(u.id)});
+              console.log("Presence tracked for user:",u.id);
+            } else if(retries > 0) {
+              setTimeout(()=>doTrack(retries-1), 1000);
+            }
           }
+          doTrack(5);
         }
       });
     channels.push(presenceCh);
