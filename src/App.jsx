@@ -948,10 +948,14 @@ function ChatPanel({ user, users, messages, setMessages, onlineIds, open }) {
       const remote = participants[0];
       const caller = users.find(u=>String(u.id)===String(user.id));
       // Ring via Supabase insert (picked up by realtime subscription)
+      console.log("Sending call signal to:",remote.id,"from:",caller?.id);
       supabase.from("flow_messages").insert({
-        id:Date.now(),fromId:caller.id,toId:String(remote.id),
+        id:Date.now(),fromId:Number(caller.id),toId:String(remote.id),
         text:"__CALL__"+type,time:nowStr(),date:todayISO(),readBy:[]
-      }).then(()=>{}).catch(()=>{});
+      }).then(r=>{
+        if(r.error) console.warn("Call signal insert error:",r.error);
+        else console.log("Call signal sent successfully");
+      }).catch(e=>console.warn("Call signal failed:",e));
     }
   }
 
@@ -2681,10 +2685,14 @@ function ChatPage({ user, users, messages, setMessages, onlineIds }) {
       const remote = participants[0];
       const caller = users.find(u=>String(u.id)===String(user.id));
       // Ring via Supabase insert (picked up by realtime subscription)
+      console.log("Sending call signal to:",remote.id,"from:",caller?.id);
       supabase.from("flow_messages").insert({
-        id:Date.now(),fromId:caller.id,toId:String(remote.id),
+        id:Date.now(),fromId:Number(caller.id),toId:String(remote.id),
         text:"__CALL__"+type,time:nowStr(),date:todayISO(),readBy:[]
-      }).then(()=>{}).catch(()=>{});
+      }).then(r=>{
+        if(r.error) console.warn("Call signal insert error:",r.error);
+        else console.log("Call signal sent successfully");
+      }).catch(e=>console.warn("Call signal failed:",e));
     }
   }
 
@@ -3050,9 +3058,10 @@ export default function App() {
         // Check if this is a call signal
         if(msg.text && msg.text.startsWith("__CALL__")) {
           const cu = currentUserRef.current;
-          if(cu && String(msg.toId)===String(cu.id) && msg.fromId!==cu.id) {
+          console.log("Call signal received:",msg.text,"from:",msg.fromId,"to:",msg.toId,"me:",cu?.id);
+          if(cu && String(msg.toId)===String(cu.id) && String(msg.fromId)!==String(cu.id)) {
             const callType = msg.text.replace("__CALL__","");
-            const callerUser = usersRef.current?.find(u=>u.id===msg.fromId) || {id:msg.fromId,name:"Unknown",avatar:"?"};
+            const callerUser = usersRef.current?.find(u=>String(u.id)===String(msg.fromId)) || {id:msg.fromId,name:"Unknown",avatar:"?"};
             setIncomingCall({from:callerUser, type:callType});
             setTimeout(()=>setIncomingCall(prev=>prev?.from?.id===callerUser.id?null:prev),30000);
           }
