@@ -2706,25 +2706,33 @@ export default function App() {
     if(user) currentUserRef.current = user;
   },[user]);
 
-  // Presence heartbeat: track aggressively at startup, then every 15s
+  // Online status: database heartbeat (like MS Teams approach)
+  // Write lastSeen timestamp to DB every 20s, check who is recent
   useEffect(()=>{
-    if(!user || !dbReady) return;
-    function trackPresence() {
-      const ch = channelsRef.current.find(c=>c.topic?.includes("flow-presence-"));
-      if(ch) {
-        ch.track({userId:Number(user.id)}).then(()=>{
-          console.log("Heartbeat tracked user:",user.id);
-        }).catch(()=>{});
-      }
+    if(!user || !dbReady || !supabase) return;
+    async function heartbeat() {
+      try {
+        const now = new Date().toISOString();
+        await supabase.from("flow_users").update({lastSeen:now}).eq("id",user.id);
+      } catch(e) { console.warn("Heartbeat error:",e); }
     }
-    // Rapid initial attempts at 1s, 2s, 4s, 6s to catch channel subscription
-    const t1 = setTimeout(trackPresence, 1000);
-    const t2 = setTimeout(trackPresence, 2000);
-    const t3 = setTimeout(trackPresence, 4000);
-    const t4 = setTimeout(trackPresence, 6000);
-    // Then steady heartbeat every 15 seconds
-    const heartbeat = setInterval(trackPresence, 15000);
-    return ()=>{ clearTimeout(t1);clearTimeout(t2);clearTimeout(t3);clearTimeout(t4);clearInterval(heartbeat); };
+    async function pollOnline() {
+      try {
+        const {data} = await supabase.from("flow_users").select("id,lastSeen");
+        if(data) {
+          const now = Date.now();
+          const online = data.filter(u => u.lastSeen && (now - new Date(u.lastSeen).getTime()) < 60000).map(u=>u.id);
+          setOnlineIds(online);
+        }
+      } catch(e) { console.warn("Poll online error:",e); }
+    }
+    // Immediately mark self online and check others
+    heartbeat();
+    pollOnline();
+    // Heartbeat every 20 seconds, poll every 15 seconds
+    const hbInterval = setInterval(heartbeat, 20000);
+    const pollInterval = setInterval(pollOnline, 15000);
+    return ()=>{ clearInterval(hbInterval); clearInterval(pollInterval); };
   },[user, dbReady]);
 
   // ── Connect to Supabase and load all data once on mount ───────────────────
@@ -2850,38 +2858,6 @@ export default function App() {
       }
     });
 
-    // Online presence
-    // Presence: use a unique channel with proper error handling
-    const presenceCh = supabase.channel("flow-presence-" + String(user.id), {
-      config: { presence: { key: String(user.id) } }
-    });
-    presenceCh
-      .on("presence","sync",()=>{
-        try {
-          const state = presenceCh.presenceState();
-          const ids = [];
-          Object.values(state).forEach(arr=>{
-            if(Array.isArray(arr)) arr.forEach(p=>{ if(p.userId) ids.push(Number(p.userId)); });
-          });
-          setOnlineIds([...new Set(ids)]);
-        } catch(e) { console.warn("Presence sync error:",e); }
-      })
-      .on("presence","join",({newPresences})=>{
-        const newIds = newPresences.map(p=>Number(p.userId)).filter(Boolean);
-        setOnlineIds(prev=>[...new Set([...prev,...newIds])]);
-      })
-      .on("presence","leave",({leftPresences})=>{
-        const leftIds = new Set(leftPresences.map(p=>Number(p.userId)));
-        setOnlineIds(prev=>prev.filter(id=>!leftIds.has(id)));
-      })
-      .subscribe(async(status)=>{
-        console.log("Presence status:",status);
-        if(status==="SUBSCRIBED") {
-          await presenceCh.track({userId:Number(user.id)});
-          console.log("Presence tracked for user:",user.id);
-        }
-      });
-    channels.push(presenceCh);
     channelsRef.current = channels;
   
     return ()=>channels.forEach(ch=>{ try{ supabase.removeChannel(ch); }catch{} });
@@ -2955,13 +2931,8 @@ export default function App() {
     lsSet("flow_user",freshUser);
     currentUserRef.current = freshUser;
     setOnlineIds(prev=>[...new Set([...prev,freshUser.id])]);
-    // Track presence
-    if(supabase) {
-      try {
-        const ch = channelsRef.current.find(c=>c.topic?.includes("flow-presence-"));
-        if(ch) ch.track({userId:Number(freshUser.id)}).catch(()=>{});
-      } catch{}
-    }
+    // Mark self online in DB immediately
+    if(supabase) supabase.from("flow_users").update({lastSeen:new Date().toISOString()}).eq("id",freshUser.id).then(()=>{}).catch(()=>{});
   }
 
   // ── Wave animation ─────────────────────────────────────────────────────────
