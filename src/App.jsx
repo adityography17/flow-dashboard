@@ -1,3 +1,4 @@
+import React from "react";
 import { useState, useEffect, useRef } from "react";
 import { createClient } from "@supabase/supabase-js";
 
@@ -2941,7 +2942,26 @@ function ChatPage({ user, users, messages, setMessages, onlineIds }) {
 
 
 // ─── APP ROOT ─────────────────────────────────────────────────────────────────
-export default function App() {
+
+// Error Boundary to prevent white screen crashes
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { hasError: false, error: null }; }
+  static getDerivedStateFromError(error) { return { hasError: true, error }; }
+  componentDidCatch(error, info) { console.error("App crash caught:", error, info); }
+  render() {
+    if (this.state.hasError) {
+      return React.createElement("div", {style:{padding:40,textAlign:"center"}},
+        React.createElement("h2", null, "Something went wrong"),
+        React.createElement("p", {style:{color:"#888"}}, String(this.state.error)),
+        React.createElement("button", {onClick:()=>this.setState({hasError:false}),style:{marginTop:16,padding:"8px 20px",background:"#C4954A",color:"white",border:"none",borderRadius:8,cursor:"pointer"}}, "Try Again"),
+        React.createElement("button", {onClick:()=>window.location.reload(),style:{marginTop:16,marginLeft:8,padding:"8px 20px",background:"#666",color:"white",border:"none",borderRadius:8,cursor:"pointer"}}, "Reload Page")
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function AppInner() {
   // ── State ──────────────────────────────────────────────────────────────────
   const [users,setUsersRaw]       = useState(INITIAL_USERS);
   const [user,setUser]             = useState(()=>lsGet("flow_user",null));
@@ -3056,15 +3076,20 @@ export default function App() {
       if(payload.eventType==="INSERT") {
         const msg = payload.new;
         // Check if this is a call signal
-        if(msg.text && msg.text.startsWith("__CALL__")) {
-          const cu = currentUserRef.current;
-          console.log("Call signal received:",msg.text,"from:",msg.fromId,"to:",msg.toId,"me:",cu?.id);
-          if(cu && String(msg.toId)===String(cu.id) && String(msg.fromId)!==String(cu.id)) {
-            const callType = msg.text.replace("__CALL__","");
-            const callerUser = usersRef.current?.find(u=>String(u.id)===String(msg.fromId)) || {id:msg.fromId,name:"Unknown",avatar:"?"};
-            setIncomingCall({from:callerUser, type:callType});
-            setTimeout(()=>setIncomingCall(prev=>prev?.from?.id===callerUser.id?null:prev),30000);
-          }
+        if(msg.text && typeof msg.text === "string" && msg.text.startsWith("__CALL__")) {
+          try {
+            const cu = currentUserRef.current;
+            console.log("Call signal received:",msg.text,"from:",msg.fromId,"to:",msg.toId,"me:",cu?.id);
+            if(cu && String(msg.toId)===String(cu.id) && String(msg.fromId)!==String(cu.id)) {
+              const callType = msg.text.replace("__CALL__","");
+              const allU = usersRef.current || [];
+              const callerUser = allU.find(u=>String(u.id)===String(msg.fromId));
+              const callerInfo = callerUser ? {id:callerUser.id,name:callerUser.name||callerUser.displayName,displayName:callerUser.displayName,avatar:callerUser.avatar} : {id:msg.fromId,name:"User "+msg.fromId,displayName:"User",avatar:"?"};
+              console.log("Showing incoming call from:",callerInfo);
+              setIncomingCall({from:callerInfo, type:callType});
+              setTimeout(()=>setIncomingCall(prev=>prev?.from?.id===callerInfo.id?null:prev),30000);
+            }
+          } catch(e) { console.warn("Call signal handling error:",e); }
           // Don't add call signals to the message list
           return;
         }
@@ -3283,7 +3308,7 @@ export default function App() {
             {active==="notes"&&<div style={{paddingRight:24}}><PlannerCalendar user={user} plannerEvents={plannerEvents} setPlannerEvents={setPlannerEvents} /></div>}
             {active==="logins"&&user.role==="superadmin"&&<div style={{paddingRight:24}}><UserLogins users={users} setUsers={setUsers} currentUser={user} setCurrentUser={setUser} /></div>}
             {/* Incoming call notification */}
-            {incomingCall&&!call&&(
+            {incomingCall&&!call&&incomingCall.from&&(
               <div style={{position:"fixed",top:20,right:20,zIndex:500,background:"var(--surface)",border:"2px solid var(--accent)",borderRadius:16,padding:20,boxShadow:"0 8px 32px rgba(0,0,0,0.25)",minWidth:280,animation:"slideIn 0.3s ease"}}>
                 <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
                   <div style={{width:48,height:48,borderRadius:"50%",background:"var(--accent)",display:"flex",alignItems:"center",justifyContent:"center",color:"white",fontSize:18,fontWeight:700}}>{incomingCall.from?.avatar}</div>
@@ -3314,4 +3339,8 @@ export default function App() {
       </div>
     </>
   );
+}
+
+export default function App() {
+  return React.createElement(ErrorBoundary, null, React.createElement(AppInner));
 }
