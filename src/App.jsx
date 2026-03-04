@@ -1904,7 +1904,6 @@ function PunchPage({ user, users=[], attendance, setAttendance }) {
           </tr>)}</tbody></table>
         )}
       </div>
-    </div>
 
     {/* ── Team Attendance (3 months) — visible to Admin/SuperAdmin ── */}
     {isSA&&(<div style={{marginTop:20}}>
