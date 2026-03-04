@@ -2606,13 +2606,17 @@ export default function App() {
     if(user) currentUserRef.current = user;
   },[user]);
 
-  // Re-track presence when user exists and db is ready (handles page refresh)
+  // Re-track presence when user changes (login or refresh restore)
   useEffect(()=>{
     if(!user || !dbReady) return;
-    const ch = channelsRef.current.find(c=>c.topic==="realtime:online_presence");
-    if(ch) {
-      ch.track({userId:user.id}).catch(()=>{});
-    }
+    // Small delay to ensure presence channel is subscribed
+    const timer = setTimeout(()=>{
+      const ch = channelsRef.current.find(c=>c.topic==="realtime:online_presence");
+      if(ch) {
+        ch.track({userId:user.id}).catch(()=>{});
+      }
+    }, 2000);
+    return ()=>clearTimeout(timer);
   },[user, dbReady]);
 
   // ── Connect to Supabase and load all data once on mount ───────────────────
@@ -2746,8 +2750,9 @@ export default function App() {
         setOnlineIds([...new Set(ids)]);
       })
       .subscribe(async(status)=>{
-        if(status==="SUBSCRIBED" && currentUserRef.current) {
-          await presenceCh.track({userId:currentUserRef.current.id});
+        if(status==="SUBSCRIBED") {
+          const u = currentUserRef.current || lsGet("flow_user",null);
+          if(u) await presenceCh.track({userId:u.id});
         }
       });
     channels.push(presenceCh);
@@ -2828,7 +2833,7 @@ export default function App() {
     if(supabase) {
       try {
         const ch = channelsRef.current.find(c=>c.topic==="realtime:online_presence");
-        if(ch) ch.track({userId:freshUser.id});
+        if(ch) ch.track({userId:freshUser.id}).catch(()=>{});
       } catch{}
     }
   }
