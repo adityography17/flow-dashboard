@@ -758,7 +758,7 @@ function ChatPanel({ user, users, messages, setMessages, onlineIds, open }) {
 
   function send(){
     if(!input.trim()||!thread)return;
-    const msg={id:Date.now(),fromId:user.id,toId:String(thread),text:input.trim(),time:nowStr(),date:todayISO(),readBy:[user.id]};
+    const msg={id:Date.now(),fromId:user.id,toId:String(thread),text:input.trim(),time:nowStr(),date:todayISO(),readBy:[{userId:user.id,at:nowStr()}]};
     setMessages(p=>[...p,msg]);
     setInput("");
   }
@@ -850,7 +850,12 @@ function ChatPanel({ user, users, messages, setMessages, onlineIds, open }) {
                     {!isMe&&<div style={{fontSize:10,color:"var(--ink-muted)",marginBottom:2,marginLeft:4}}>{sender?.name||sender?.displayName||sender?.username}</div>}
                     <div className={`chat-bubble ${isMe?"mine":"theirs"}`}>
                       {m.text}
-                      <div className="chat-bubble-time">{m.time}</div>
+                      <div className="chat-bubble-time">{m.time}{isMe&&(()=>{
+                        const rb=m.readBy||[];
+                        const others=rb.filter(r=>{const uid=typeof r==="object"?r.userId:r;return String(uid)!==String(user.id);});
+                        if(others.length>0){const st=others[0];const t=typeof st==="object"?st.at:null;return <span title={t?"Seen at "+t:"Seen"} style={{color:"#53BDEB",fontWeight:700,marginLeft:3}}> ✓✓</span>;}
+                        return <span style={{opacity:0.5,marginLeft:3}}> ✓</span>;
+                      })()}</div>
                     </div>
                   </div>
                 );
@@ -2406,19 +2411,32 @@ function ChatPage({ user, users, messages, setMessages, onlineIds }) {
     const msgs = tid==="all"
       ? messages.filter(m=>m.toId==="all")
       : messages.filter(m=>String(m.fromId)===String(tid)&&String(m.toId)===String(user.id));
-    return msgs.filter(m=>!m.readBy?.includes(user.id)).length;
+    return msgs.filter(m=>!(m.readBy||[]).some(r=>typeof r==="object"?r.userId===user.id:r===user.id)).length;
   };
 
   useEffect(()=>{ msgEndRef.current?.scrollIntoView({behavior:"smooth"}); },[visibleMsgs.length,thread]);
 
-  // Mark as read when thread opened
+  // Mark as read when thread opened — persist to Supabase so sender sees blue ticks
   useEffect(()=>{
     if(!thread) return;
+    const now = nowStr();
+    const toUpdate = [];
     setMessages(prev=>prev.map(m=>{
       const isForMe = m.toId==="all" || (String(m.fromId)===String(thread)&&String(m.toId)===String(user.id));
-      if(isForMe&&!m.readBy?.includes(user.id)) return {...m,readBy:[...(m.readBy||[]),user.id]};
+      const alreadyRead = (m.readBy||[]).some(r=>typeof r==="object"?r.userId===user.id:r===user.id);
+      if(isForMe && !alreadyRead) {
+        const newReadBy = [...(m.readBy||[]),{userId:user.id,at:now}];
+        toUpdate.push({id:m.id, readBy:newReadBy});
+        return {...m, readBy:newReadBy};
+      }
       return m;
     }));
+    // Persist read receipts to Supabase
+    if(toUpdate.length>0 && supabase) {
+      toUpdate.forEach(u=>{
+        supabase.from("flow_messages").update({readBy:u.readBy}).eq("id",u.id).then(()=>{}).catch(()=>{});
+      });
+    }
   },[thread]);
 
   function send(){
@@ -2427,7 +2445,7 @@ function ChatPage({ user, users, messages, setMessages, onlineIds }) {
       id:Date.now(), fromId:user.id, toId:String(thread),
       text:input.trim(), time:nowStr(), date:todayISO(),
       replyTo:replyTo?{id:replyTo.id,text:replyTo.text,from:replyTo.fromId}:null,
-      readBy:[user.id]
+      readBy:[{userId:user.id,at:nowStr()}]
     };
     setMessages(p=>[...p,msg]);
     setInput(""); setReplyTo(null);
@@ -2608,7 +2626,16 @@ function ChatPage({ user, users, messages, setMessages, onlineIds }) {
                     }}>
                       {item.text}
                       <span style={{fontSize:9,opacity:0.6,marginLeft:8,whiteSpace:"nowrap"}}>{item.time}</span>
-                      {isMe&&item.readBy?.length>1&&<span style={{fontSize:9,opacity:0.7,marginLeft:4}}>✓✓</span>}
+                      {isMe&&(()=>{
+                        const rb=item.readBy||[];
+                        const readByOthers=rb.filter(r=>{const uid=typeof r==="object"?r.userId:r;return String(uid)!==String(user.id);});
+                        const isSeen=readByOthers.length>0;
+                        const seenEntry=readByOthers[0];
+                        const seenTime=seenEntry&&typeof seenEntry==="object"?seenEntry.at:null;
+                        // For DMs: ✓=sent, ✓✓grey=delivered(loaded), ✓✓blue=seen(opened thread)
+                        if(isSeen) return <span title={seenTime?"Seen at "+seenTime:"Seen"} style={{fontSize:9,marginLeft:4,color:"#53BDEB",fontWeight:700}}>✓✓</span>;
+                        return <span style={{fontSize:9,marginLeft:4,opacity:0.5}}>✓</span>;
+                      })()}
                     </div>
                     {/* Hover actions */}
                     <div style={{position:"absolute",top:-28,right:isMe?0:"auto",left:isMe?"auto":0,display:"flex",gap:3,opacity:0,transition:"opacity 0.15s"}}
