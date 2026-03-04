@@ -2599,11 +2599,21 @@ export default function App() {
   const [chatNotif,setChatNotif]   = useState(null);
   const [dbReady,setDbReady]       = useState(false);
   const currentUserRef             = useRef(null);
+  const channelsRef                = useRef([]);
 
   // Keep currentUserRef in sync after refresh
   useEffect(()=>{
     if(user) currentUserRef.current = user;
   },[user]);
+
+  // Re-track presence when user exists and db is ready (handles page refresh)
+  useEffect(()=>{
+    if(!user || !dbReady) return;
+    const ch = channelsRef.current.find(c=>c.topic==="realtime:online_presence");
+    if(ch) {
+      ch.track({userId:user.id}).catch(()=>{});
+    }
+  },[user, dbReady]);
 
   // ── Connect to Supabase and load all data once on mount ───────────────────
   useEffect(()=>{
@@ -2741,6 +2751,7 @@ export default function App() {
         }
       });
     channels.push(presenceCh);
+    channelsRef.current = channels;
   
     return ()=>channels.forEach(ch=>{ try{ supabase.removeChannel(ch); }catch{} });
   },[dbReady]);
