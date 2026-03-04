@@ -843,7 +843,7 @@ function ChatPanel({ user, users, messages, setMessages, onlineIds, open }) {
             <div className="chat-body">
               {visibleMsgs.length===0&&<div style={{textAlign:"center",color:"var(--ink-muted)",fontSize:12,marginTop:20}}>Start the conversation ✦</div>}
               {visibleMsgs.map(m=>{
-                const isMe=m.fromId===user.id;
+                const isMe=String(m.fromId)===String(user.id);
                 const sender=getUserById(m.fromId);
                 return(
                   <div key={m.id} style={{display:"flex",flexDirection:"column",alignItems:isMe?"flex-end":"flex-start"}}>
@@ -853,7 +853,7 @@ function ChatPanel({ user, users, messages, setMessages, onlineIds, open }) {
                       <div className="chat-bubble-time">{m.time}{isMe&&(()=>{
                         const rb=m.readBy||[];
                         const others=rb.filter(r=>{const uid=typeof r==="object"?r.userId:r;return String(uid)!==String(user.id);});
-                        if(others.length>0){const st=others[0];const t=typeof st==="object"?st.at:null;return <span title={t?"Seen at "+t:"Seen"} style={{color:"#53BDEB",fontWeight:700,marginLeft:3}}> ✓✓</span>;}
+                        if(others.length>0){const st=others[0];const t=typeof st==="object"?st.at:null;return <span style={{marginLeft:3}}><span style={{color:"#53BDEB",fontWeight:700}}>✓✓</span></span>;}
                         return <span style={{opacity:0.5,marginLeft:3}}> ✓</span>;
                       })()}</div>
                     </div>
@@ -2619,7 +2619,7 @@ function ChatPage({ user, users, messages, setMessages, onlineIds }) {
                 <div style={{flex:1,height:1,background:"var(--border)"}} />
               </div>
             );
-            const isMe=item.fromId===user.id;
+            const isMe=String(item.fromId)===String(user.id);
             const sender=getUser(item.fromId);
             const replyMsg=item.replyTo?messages.find(m=>m.id===item.replyTo.id):null;
             const msgReactions=reactions[item.id]||[];
@@ -2656,8 +2656,10 @@ function ChatPage({ user, users, messages, setMessages, onlineIds }) {
                         const isSeen=readByOthers.length>0;
                         const seenEntry=readByOthers[0];
                         const seenTime=seenEntry&&typeof seenEntry==="object"?seenEntry.at:null;
-                        // For DMs: ✓=sent, ✓✓grey=delivered(loaded), ✓✓blue=seen(opened thread)
-                        if(isSeen) return <span title={seenTime?"Seen at "+seenTime:"Seen"} style={{fontSize:9,marginLeft:4,color:"#53BDEB",fontWeight:700}}>✓✓</span>;
+                        if(isSeen) return <span style={{fontSize:9,marginLeft:4}}>
+                          <span style={{color:"#53BDEB",fontWeight:700}}>✓✓</span>
+                          {seenTime&&<span style={{color:"#53BDEB",marginLeft:2,fontSize:8}}>seen {seenTime}</span>}
+                        </span>;
                         return <span style={{fontSize:9,marginLeft:4,opacity:0.5}}>✓</span>;
                       })()}
                     </div>
