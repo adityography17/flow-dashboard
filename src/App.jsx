@@ -725,9 +725,10 @@ function VideoCallModal({ participants, callType, onEnd, supabase, currentUser }
     const remoteUser=participants.find(p=>String(p.id)!==String(currentUser.id));
     if(!remoteUser) return;
 
-    const isCaller=Number(currentUser.id)<Number(remoteUser.id);
     const roomId=[currentUser.id,remoteUser.id].sort().join("-");
     const channelName="call-"+roomId;
+    let makingOffer=false;
+    let iceCandidateQueue=[];
 
     const turnUrl = typeof import.meta !== "undefined" ? import.meta.env?.VITE_TURN_URL : null;
     const turnUser = typeof import.meta !== "undefined" ? import.meta.env?.VITE_TURN_USER : null;
@@ -741,7 +742,7 @@ function VideoCallModal({ participants, callType, onEnd, supabase, currentUser }
     const pc=new RTCPeerConnection({iceServers});
     pcRef.current=pc;
 
-    // Get local media
+    // Get local media first, then set up signaling
     navigator.mediaDevices.getUserMedia({
       video:callType==="video",
       audio:true
@@ -750,68 +751,97 @@ function VideoCallModal({ participants, callType, onEnd, supabase, currentUser }
       if(localVideoRef.current) localVideoRef.current.srcObject=stream;
       stream.getTracks().forEach(t=>pc.addTrack(t,stream));
       if(callType==="audio") stream.getVideoTracks().forEach(t=>t.enabled=false);
+      console.log("Local media ready, setting up signaling...");
+      setupSignaling();
     }).catch(e=>{
       console.warn("Media error:",e);
-      setStatus("Media access denied");
+      setStatus("Camera/mic denied. Check browser permissions.");
     });
 
     // Handle remote stream
     pc.ontrack=(e)=>{
+      console.log("Got remote track!");
       setRemoteStream(e.streams[0]);
       if(remoteVideoRef.current) remoteVideoRef.current.srcObject=e.streams[0];
       setStatus("connected");
     };
 
     pc.oniceconnectionstatechange=()=>{
+      console.log("ICE state:",pc.iceConnectionState);
       if(pc.iceConnectionState==="connected"||pc.iceConnectionState==="completed") setStatus("connected");
       if(pc.iceConnectionState==="disconnected"||pc.iceConnectionState==="failed") setStatus("disconnected");
     };
 
-    // Signaling via Supabase channel
-    const sigCh=supabase.channel(channelName);
-    signalChannelRef.current=sigCh;
+    function setupSignaling(){
+      const sigCh=supabase.channel(channelName,{config:{broadcast:{self:false}}});
+      signalChannelRef.current=sigCh;
 
-    sigCh.on("broadcast",{event:"signal"},(payload)=>{
-      const msg=payload.payload;
-      if(String(msg.from)===String(currentUser.id)) return;
-      if(msg.type==="offer"&&!isCaller){
-        pc.setRemoteDescription(new RTCSessionDescription(msg.sdp))
-          .then(()=>pc.createAnswer())
-          .then(a=>pc.setLocalDescription(a))
-          .then(()=>{
-            sigCh.send({type:"broadcast",event:"signal",payload:{type:"answer",sdp:pc.localDescription,from:currentUser.id}});
-          }).catch(e=>console.warn("Answer error:",e));
-      }
-      if(msg.type==="answer"&&isCaller){
-        pc.setRemoteDescription(new RTCSessionDescription(msg.sdp)).catch(e=>console.warn("Set answer error:",e));
-      }
-      if(msg.type==="ice"&&msg.candidate){
-        pc.addIceCandidate(new RTCIceCandidate(msg.candidate)).catch(()=>{});
-      }
-      if(msg.type==="hangup"){
-        cleanup();
-        onEnd();
-      }
-    }).subscribe((st)=>{
-      if(st==="SUBSCRIBED"){
-        setStatus("waiting");
-        // Send ICE candidates
-        pc.onicecandidate=(e)=>{
-          if(e.candidate){
-            sigCh.send({type:"broadcast",event:"signal",payload:{type:"ice",candidate:e.candidate,from:currentUser.id}});
-          }
-        };
-        // Caller creates offer after a short delay
-        if(isCaller){
-          setTimeout(()=>{
-            pc.createOffer().then(o=>pc.setLocalDescription(o)).then(()=>{
-              sigCh.send({type:"broadcast",event:"signal",payload:{type:"offer",sdp:pc.localDescription,from:currentUser.id}});
-              setStatus("ringing");
-            }).catch(e=>console.warn("Offer error:",e));
-          },1500);
+      // ICE candidate handler
+      pc.onicecandidate=(e)=>{
+        if(e.candidate){
+          sigCh.send({type:"broadcast",event:"signal",payload:{type:"ice",candidate:e.candidate,from:currentUser.id}}).catch(()=>{});
         }
-      }
-    });
+      };
+
+      sigCh.on("broadcast",{event:"signal"},(payload)=>{
+        const msg=payload.payload;
+        if(String(msg.from)===String(currentUser.id)) return;
+        console.log("Signal received:",msg.type);
+
+        if(msg.type==="offer"){
+          pc.setRemoteDescription(new RTCSessionDescription(msg.sdp))
+            .then(()=>{
+              // Process queued ICE candidates
+              iceCandidateQueue.forEach(c=>pc.addIceCandidate(new RTCIceCandidate(c)).catch(()=>{}));
+              iceCandidateQueue=[];
+              return pc.createAnswer();
+            })
+            .then(a=>pc.setLocalDescription(a))
+            .then(()=>{
+              console.log("Sending answer...");
+              sigCh.send({type:"broadcast",event:"signal",payload:{type:"answer",sdp:pc.localDescription,from:currentUser.id}});
+            }).catch(e=>console.warn("Answer error:",e));
+        }
+        if(msg.type==="answer"){
+          pc.setRemoteDescription(new RTCSessionDescription(msg.sdp))
+            .then(()=>{
+              iceCandidateQueue.forEach(c=>pc.addIceCandidate(new RTCIceCandidate(c)).catch(()=>{}));
+              iceCandidateQueue=[];
+            }).catch(e=>console.warn("Set answer error:",e));
+        }
+        if(msg.type==="ice"&&msg.candidate){
+          if(pc.remoteDescription){
+            pc.addIceCandidate(new RTCIceCandidate(msg.candidate)).catch(()=>{});
+          } else {
+            iceCandidateQueue.push(msg.candidate);
+          }
+        }
+        if(msg.type==="hangup"){
+          cleanup();
+          onEnd();
+        }
+      }).subscribe((st)=>{
+        console.log("Call channel status:",st);
+        if(st==="SUBSCRIBED"){
+          setStatus("waiting");
+          // Send a "ready" signal, then wait a moment and create offer
+          sigCh.send({type:"broadcast",event:"signal",payload:{type:"ready",from:currentUser.id}}).catch(()=>{});
+          // Both sides try to create an offer after a delay
+          // The negotiationneeded event or a simple timeout handles this
+          setTimeout(()=>{
+            if(pc.signalingState==="stable"&&!pc.remoteDescription){
+              console.log("Creating offer...");
+              makingOffer=true;
+              pc.createOffer().then(o=>pc.setLocalDescription(o)).then(()=>{
+                sigCh.send({type:"broadcast",event:"signal",payload:{type:"offer",sdp:pc.localDescription,from:currentUser.id}});
+                setStatus("ringing");
+                makingOffer=false;
+              }).catch(e=>{console.warn("Offer error:",e);makingOffer=false;});
+            }
+          },2000);
+        }
+      });
+    }
 
     return ()=>cleanup();
   },[]);
@@ -916,12 +946,12 @@ function ChatPanel({ user, users, messages, setMessages, onlineIds, open }) {
     // Signal the remote user that a call is incoming
     if(supabase && participants.length===1) {
       const remote = participants[0];
-      const roomId = [user.id,remote.id].sort().join("-");
       const caller = users.find(u=>String(u.id)===String(user.id));
-      supabase.channel("call-signals").send({
-        type:"broadcast",event:"call-ring",
-        payload:{toId:remote.id,from:caller,callType:type,roomId}
-      }).catch(()=>{});
+      // Ring via Supabase insert (picked up by realtime subscription)
+      supabase.from("flow_messages").insert({
+        id:Date.now(),fromId:caller.id,toId:String(remote.id),
+        text:"__CALL__"+type,time:nowStr(),date:todayISO(),readBy:[]
+      }).then(()=>{}).catch(()=>{});
     }
   }
 
@@ -2649,12 +2679,12 @@ function ChatPage({ user, users, messages, setMessages, onlineIds }) {
     // Signal the remote user
     if(supabase && participants.length===1 && participants[0]) {
       const remote = participants[0];
-      const roomId = [user.id,remote.id].sort().join("-");
       const caller = users.find(u=>String(u.id)===String(user.id));
-      supabase.channel("call-signals").send({
-        type:"broadcast",event:"call-ring",
-        payload:{toId:remote.id,from:caller,callType:type,roomId}
-      }).catch(()=>{});
+      // Ring via Supabase insert (picked up by realtime subscription)
+      supabase.from("flow_messages").insert({
+        id:Date.now(),fromId:caller.id,toId:String(remote.id),
+        text:"__CALL__"+type,time:nowStr(),date:todayISO(),readBy:[]
+      }).then(()=>{}).catch(()=>{});
     }
   }
 
@@ -2923,6 +2953,7 @@ export default function App() {
   const [dbReady,setDbReady]       = useState(false);
   const currentUserRef             = useRef(null);
   const channelsRef                = useRef([]);
+  const usersRef                   = useRef(users);
 
   // Keep currentUserRef in sync after refresh
   useEffect(()=>{
@@ -3016,6 +3047,18 @@ export default function App() {
     sub("flow_messages", (payload)=>{
       if(payload.eventType==="INSERT") {
         const msg = payload.new;
+        // Check if this is a call signal
+        if(msg.text && msg.text.startsWith("__CALL__")) {
+          const cu = currentUserRef.current;
+          if(cu && String(msg.toId)===String(cu.id) && msg.fromId!==cu.id) {
+            const callType = msg.text.replace("__CALL__","");
+            const callerUser = usersRef.current?.find(u=>u.id===msg.fromId) || {id:msg.fromId,name:"Unknown",avatar:"?"};
+            setIncomingCall({from:callerUser, type:callType});
+            setTimeout(()=>setIncomingCall(prev=>prev?.from?.id===callerUser.id?null:prev),30000);
+          }
+          // Don't add call signals to the message list
+          return;
+        }
         setMessagesRaw(prev=>{
           if(prev.find(m=>String(m.id)===String(msg.id))) return prev;
           // Notify if message is for current user and not from them
@@ -3083,19 +3126,6 @@ export default function App() {
 
     channelsRef.current = channels;
 
-    // Listen for incoming calls
-    const callCh = sb.channel("call-signals");
-    callCh.on("broadcast",{event:"call-ring"},(payload)=>{
-      const msg = payload.payload;
-      const cu = currentUserRef.current;
-      if(!cu) return;
-      if(String(msg.toId)===String(cu.id)) {
-        setIncomingCall({from:msg.from, type:msg.callType, roomId:msg.roomId});
-        // Auto-dismiss after 30 seconds
-        setTimeout(()=>setIncomingCall(prev=>prev?.roomId===msg.roomId?null:prev),30000);
-      }
-    }).subscribe();
-    channels.push(callCh);
   
     return ()=>channels.forEach(ch=>{ try{ supabase.removeChannel(ch); }catch{} });
   },[dbReady, user?.id]);
