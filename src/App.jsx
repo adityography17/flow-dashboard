@@ -804,7 +804,7 @@ function ChatPanel({ user, users, messages, setMessages, onlineIds, open }) {
                       <div className={`status-dot ${isOnline?"status-online":"status-offline"}`} style={{position:"absolute",bottom:0,right:0,border:"2px solid var(--surface)"}} />
                     </div>
                     <div className="chat-contact-info">
-                      <div className="chat-contact-name">{u.displayName||u.username}</div>
+                      <div className="chat-contact-name">{u.name||u.displayName||u.username}</div>
                       <div className="chat-contact-last">{isOnline?"● Online":"○ Offline"}</div>
                     </div>
                     <button className="call-btn call-btn-video" style={{fontSize:9}} onClick={e=>{e.stopPropagation();startCall("video",[u]);}}>📹</button>
@@ -826,7 +826,7 @@ function ChatPanel({ user, users, messages, setMessages, onlineIds, open }) {
                 </div>
               )}
               <div style={{flex:1}}>
-                <div className="chat-contact-name">{thread==="all"?"All Hands":(getUserById(thread)?.displayName||getUserById(thread)?.username)}</div>
+                <div className="chat-contact-name">{thread==="all"?"All Hands":(getUserById(thread)?.name||getUserById(thread)?.displayName)}</div>
                 <div style={{fontSize:10,color:"var(--ink-muted)"}}>{thread==="all"?`${onlineIds.length} active`:onlineIds.includes(thread)?"● Online":"○ Offline"}</div>
               </div>
               <div className="flex gap-8">
@@ -846,7 +846,7 @@ function ChatPanel({ user, users, messages, setMessages, onlineIds, open }) {
                 const sender=getUserById(m.fromId);
                 return(
                   <div key={m.id} style={{display:"flex",flexDirection:"column",alignItems:isMe?"flex-end":"flex-start"}}>
-                    {!isMe&&<div style={{fontSize:10,color:"var(--ink-muted)",marginBottom:2,marginLeft:4}}>{sender?.displayName||sender?.username}</div>}
+                    {!isMe&&<div style={{fontSize:10,color:"var(--ink-muted)",marginBottom:2,marginLeft:4}}>{sender?.name||sender?.displayName||sender?.username}</div>}
                     <div className={`chat-bubble ${isMe?"mine":"theirs"}`}>
                       {m.text}
                       <div className="chat-bubble-time">{m.time}</div>
@@ -2163,9 +2163,9 @@ function PlannerCalendar({ user, plannerEvents={}, setPlannerEvents }) {
   function openAdd(h,m=0){
     // Block adding tasks in the past on today
     if(selDate===todayISO()&&h<new Date().getHours()) return;
-    setEditEv(null);setForm({title:"",startHour:h,startMin:m,endHour:Math.min(h+1,22),endMin:0,color:PLANNER_COLORS[0]});setShowModal(true);
+    setEditEv(null);setForm({title:"",desc:"",startHour:h,startMin:m,endHour:Math.min(h+1,22),endMin:0,color:PLANNER_COLORS[0]});setShowModal(true);
   }
-  function openEdit(ev){setEditEv(ev);setForm({title:ev.title,startHour:ev.startHour,startMin:ev.startMin||0,endHour:ev.endHour,endMin:ev.endMin||0,color:ev.color});setShowModal(true);}
+  function openEdit(ev){setEditEv(ev);setForm({title:ev.title,desc:ev.desc||"",startHour:ev.startHour,startMin:ev.startMin||0,endHour:ev.endHour,endMin:ev.endMin||0,color:ev.color});setShowModal(true);}
   function saveEv(){if(!form.title.trim())return;if(editEv)setEvents(prev=>prev.map(e=>e.id===editEv.id?{...e,...form,date:selDate}:e));else setEvents(prev=>[...prev,{id:Date.now(),...form,date:selDate}]);setShowModal(false);}
   function delEv(id){setEvents(prev=>prev.filter(e=>e.id!==id));setShowModal(false);}
   const selDisplay=new Date(selDate+"T12:00").toLocaleDateString("en-IN",{weekday:"long",day:"numeric",month:"long"});
@@ -2198,7 +2198,7 @@ function PlannerCalendar({ user, plannerEvents={}, setPlannerEvents }) {
         </div>
       </div>
       <div className="timeline-wrap">
-        <div className="timeline-header"><span className="timeline-date">{selDisplay}</span><button className="btn btn-ghost btn-sm" onClick={()=>openAdd(9)}>+ Block</button></div>
+        <div className="timeline-header"><span className="timeline-date">{selDisplay}</span></div>
         <div className="timeline-body">
           {HOURS.map(hour=>{
             const evHere=dayEvents.filter(e=>e.startHour===hour);const blocked=dayEvents.filter(e=>hour>=e.startHour&&hour<e.endHour);
@@ -2220,6 +2220,7 @@ function PlannerCalendar({ user, plannerEvents={}, setPlannerEvents }) {
     </div>
     {showModal&&(<Modal title={editEv?"Edit Task":"Add Task Block"} onClose={()=>setShowModal(false)}>
       <div className="form-group"><label className="form-label">Title</label><input className="form-input" value={form.title} onChange={e=>setForm(p=>({...p,title:e.target.value}))} autoFocus /></div>
+      <div className="form-group"><label className="form-label">Description</label><textarea className="form-input" rows={2} value={form.desc} onChange={e=>setForm(p=>({...p,desc:e.target.value}))} placeholder="Add details…" style={{resize:"vertical"}} /></div>
       <div className="grid-2">
         <div className="form-group">
           <label className="form-label">Start Time</label>
@@ -2520,7 +2521,7 @@ function ChatPage({ user, users, messages, setMessages, onlineIds }) {
                   <div style={{position:"absolute",bottom:-1,right:-1,width:10,height:10,borderRadius:"50%",background:isOnline?"#4ADE80":"#6B7280",border:"2px solid var(--surface)"}} />
                 </div>
                 <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontWeight:unread?700:500,fontSize:13,color:"var(--ink)"}}>{u.displayName||u.name}</div>
+                  <div style={{fontWeight:unread?700:500,fontSize:13,color:"var(--ink)"}}>{u.name||u.displayName}</div>
                   <div style={{fontSize:11,color:"var(--ink-muted)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
                     {lastMsg?lastMsg.text:isOnline?"● Online":"○ Offline"}
                   </div>
@@ -2589,7 +2590,7 @@ function ChatPage({ user, users, messages, setMessages, onlineIds }) {
               >
                 {!isMe&&<div style={{width:28,height:28,borderRadius:7,background:sender?.role==="admin"?"var(--accent)":"var(--info)",display:"flex",alignItems:"center",justifyContent:"center",color:"white",fontSize:11,fontWeight:700,flexShrink:0,marginBottom:4}}>{sender?.avatar}</div>}
                 <div style={{maxWidth:"68%"}}>
-                  {!isMe&&<div style={{fontSize:10,color:"var(--ink-muted)",marginBottom:2,fontWeight:600}}>{sender?.displayName||sender?.name}</div>}
+                  {!isMe&&<div style={{fontSize:10,color:"var(--ink-muted)",marginBottom:2,fontWeight:600}}>{sender?.name||sender?.displayName}</div>}
                   {/* Reply preview */}
                   {item.replyTo&&(
                     <div style={{background:"var(--cream-dark)",borderLeft:"3px solid var(--accent)",borderRadius:4,padding:"4px 8px",marginBottom:4,fontSize:11,color:"var(--ink-muted)"}}>
