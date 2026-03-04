@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { createClient } from "@supabase/supabase-js";
 
 // ─── DATA ────────────────────────────────────────────────────────────────────
 const INITIAL_USERS = [
@@ -64,22 +65,16 @@ function lsSet(key, val) {
 }
 
 // ── Supabase client ───────────────────────────────────────────────────────────
-// ⚠️  PASTE YOUR VALUES HERE ⚠️
 const SUPABASE_URL = "https://vouhrqmcpmakqcnaasdb.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZvdWhycW1jcG1ha3FjbmFhc2RiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI0MTYwMDYsImV4cCI6MjA4Nzk5MjAwNn0.4yiAH-2ax3WQr4E87driVN0JJ3HaZS28KObbpaTnYyc";
 
-let _sb = null;
-async function getSB() {
-  if(_sb) return _sb;
-  if(!SUPABASE_URL || SUPABASE_URL === "YOUR_SUPABASE_URL_HERE") return null;
-  try {
-    const { createClient } = await import("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm");
-    _sb = createClient(SUPABASE_URL, SUPABASE_KEY, {
-      realtime: { params: { eventsPerSecond: 10 } }
-    });
-    return _sb;
-  } catch(e) { console.warn("Supabase load failed:", e); return null; }
-}
+// Single shared client instance
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
+  realtime: { params: { eventsPerSecond: 10 } }
+});
+
+// Keep getSB() for compatibility — returns the shared client
+async function getSB() { return supabase; }
 
 // Generic helpers — fall back to localStorage if Supabase unavailable
 async function dbGet(table, fallback=[]) {
@@ -762,7 +757,8 @@ function ChatPanel({ user, users, messages, setMessages, onlineIds, open }) {
 
   function send(){
     if(!input.trim()||!thread)return;
-    setMessages(p=>[...p,{id:Date.now(),fromId:user.id,toId:thread,text:input.trim(),time:nowStr(),date:todayISO()}]);
+    const msg={id:Date.now(),fromId:user.id,toId:String(thread),text:input.trim(),time:nowStr(),date:todayISO(),readBy:[user.id]};
+    setMessages(p=>[...p,msg]);
     setInput("");
   }
   function startCall(type,participants){
@@ -1827,7 +1823,7 @@ function PunchPage({ user, attendance, setAttendance }) {
     const t=nowStr();
     if(pendingAction==="in"){
       setSelfieIn(img);
-      setAttendance(prev=>[...prev,{userId:user.id,date:todayISO(),login:t,logout:null,selfieIn:img,selfieOut:null}]);
+      setAttendance(prev=>[...prev,{id:Date.now(),userId:user.id,date:todayISO(),login:t,logout:null,selfieIn:img,selfieOut:null}]);
       setPunchedIn(true); setLoginTime(t);
     } else {
       setSelfieOut(img);
@@ -2303,13 +2299,13 @@ function ChatPage({ user, users, messages, setMessages, onlineIds }) {
 
   const visibleMsgs = thread==="all"
     ? messages.filter(m=>m.toId==="all")
-    : messages.filter(m=>(m.fromId===user.id&&String(m.toId)===String(thread))||(String(m.fromId)===String(thread)&&m.toId===user.id));
+    : messages.filter(m=>(String(m.fromId)===String(user.id)&&String(m.toId)===String(thread))||(String(m.fromId)===String(thread)&&String(m.toId)===String(user.id)));
 
   // Unread counts per thread
   const unreadCount = (tid) => {
     const msgs = tid==="all"
       ? messages.filter(m=>m.toId==="all")
-      : messages.filter(m=>String(m.fromId)===String(tid)&&m.toId===user.id);
+      : messages.filter(m=>String(m.fromId)===String(tid)&&String(m.toId)===String(user.id));
     return msgs.filter(m=>!m.readBy?.includes(user.id)).length;
   };
 
@@ -2319,7 +2315,7 @@ function ChatPage({ user, users, messages, setMessages, onlineIds }) {
   useEffect(()=>{
     if(!thread) return;
     setMessages(prev=>prev.map(m=>{
-      const isForMe = m.toId==="all" || (String(m.fromId)===String(thread)&&m.toId===user.id);
+      const isForMe = m.toId==="all" || (String(m.fromId)===String(thread)&&String(m.toId)===String(user.id));
       if(isForMe&&!m.readBy?.includes(user.id)) return {...m,readBy:[...(m.readBy||[]),user.id]};
       return m;
     }));
@@ -2328,7 +2324,7 @@ function ChatPage({ user, users, messages, setMessages, onlineIds }) {
   function send(){
     if(!input.trim()) return;
     const msg = {
-      id:Date.now(), fromId:user.id, toId:thread,
+      id:Date.now(), fromId:user.id, toId:String(thread),
       text:input.trim(), time:nowStr(), date:todayISO(),
       replyTo:replyTo?{id:replyTo.id,text:replyTo.text,from:replyTo.fromId}:null,
       readBy:[user.id]
@@ -2587,213 +2583,243 @@ function ChatPage({ user, users, messages, setMessages, onlineIds }) {
 // ─── APP ROOT ─────────────────────────────────────────────────────────────────
 export default function App() {
   // ── State ──────────────────────────────────────────────────────────────────
-  const [users,setUsersRaw]   = useState(()=>lsGet("flow_users", INITIAL_USERS));
-  const [user,setUser]         = useState(null);
-  const [active,setActive]     = useState("dashboard");
-  const [dark,setDark]         = useState(()=>lsGet("flow_dark", false));
-  const [clients,setClientsRaw]   = useState(()=>lsGet("flow_clients", []));
-  const [content,setContentRaw]   = useState(()=>lsGet("flow_content", []));
-  const [calendar,setCalendarRaw] = useState(()=>lsGet("flow_calendar", []));
-  const [leaves,setLeavesRaw]     = useState(()=>lsGet("flow_leaves", []));
-  const [attendance,setAttendanceRaw] = useState(()=>lsGet("flow_attendance", []));
-  const [messages,setMessagesRaw] = useState(()=>lsGet("flow_messages", []));
-  const [plannerEvents,setPlannerEventsRaw] = useState(()=>lsGet("flow_planner", {}));
-  const [onlineIds,setOnlineIds]  = useState([]);
-  const [phase,setPhase]          = useState(0);
-  const [chatNotif,setChatNotif]  = useState(null);
-  const [dbReady,setDbReady]      = useState(false); // true once Supabase loaded
-  const currentUserRef            = useRef(null);
+  const [users,setUsersRaw]       = useState(INITIAL_USERS);
+  const [user,setUser]             = useState(()=>lsGet("flow_user",null));
+  const [active,setActive]         = useState("dashboard");
+  const [dark,setDark]             = useState(()=>lsGet("flow_dark",false));
+  const [clients,setClientsRaw]    = useState([]);
+  const [content,setContentRaw]    = useState([]);
+  const [calendar,setCalendarRaw]  = useState([]);
+  const [leaves,setLeavesRaw]      = useState([]);
+  const [attendance,setAttendanceRaw] = useState([]);
+  const [messages,setMessagesRaw]  = useState([]);
+  const [plannerEvents,setPlannerEventsRaw] = useState({});
+  const [onlineIds,setOnlineIds]   = useState([]);
+  const [phase,setPhase]           = useState(0);
+  const [chatNotif,setChatNotif]   = useState(null);
+  const [dbReady,setDbReady]       = useState(false);
+  const currentUserRef             = useRef(null);
 
-  // ── Load ALL data from Supabase on mount ───────────────────────────────────
+  // Keep currentUserRef in sync after refresh
   useEffect(()=>{
-    async function loadAll() {
-      const sb = await getSB();
-      if(!sb) { setDbReady(true); return; } // offline mode — use localStorage
+    if(user) currentUserRef.current = user;
+  },[user]);
 
-      const [u,cl,co,ca,lv,at,ms,pl] = await Promise.all([
-        dbGet("flow_users",    lsGet("flow_users", INITIAL_USERS)),
-        dbGet("flow_clients",  []),
-        dbGet("flow_content",  []),
-        dbGet("flow_calendar", []),
-        dbGet("flow_leaves",   []),
-        dbGet("flow_attendance",[]),
-        dbGet("flow_messages", []),
-        dbGet("flow_planner",  []),
-      ]);
+  // ── Connect to Supabase and load all data once on mount ───────────────────
+  useEffect(()=>{
+    async function init() {
+      
+      // Load all tables in parallel
+      try {
+        const [u,cl,co,ca,lv,at,ms,pl] = await Promise.all([
+          supabase.from("flow_users").select("*"),
+          supabase.from("flow_clients").select("*"),
+          supabase.from("flow_content").select("*"),
+          supabase.from("flow_calendar").select("*"),
+          supabase.from("flow_leaves").select("*"),
+          supabase.from("flow_attendance").select("*"),
+          supabase.from("flow_messages").select("*").order("id",{ascending:true}),
+          supabase.from("flow_planner").select("*"),
+        ]);
 
-      // Users: merge DB with INITIAL_USERS so roles/passwords are always available
-      const mergedUsers = INITIAL_USERS.map(iu=>{
-        const dbU = u.find(x=>x.id===iu.id);
-        return dbU ? {...iu,...dbU} : iu;
-      });
-      setUsersRaw(mergedUsers);      lsSet("flow_users", mergedUsers);
-      setClientsRaw(cl);             lsSet("flow_clients", cl);
-      setContentRaw(co);             lsSet("flow_content", co);
-      setCalendarRaw(ca);            lsSet("flow_calendar", ca);
-      setLeavesRaw(lv);              lsSet("flow_leaves", lv);
-      setAttendanceRaw(at);          lsSet("flow_attendance", at);
-      setMessagesRaw(ms);            lsSet("flow_messages", ms);
-
-      // Planner: stored as array of {userId, events:[]}
-      const plannerMap = {};
-      pl.forEach(row=>{ plannerMap[row.userId] = row.events||[]; });
-      setPlannerEventsRaw(plannerMap); lsSet("flow_planner", plannerMap);
-
+        if(u.data?.length) {
+          const merged = INITIAL_USERS.map(iu=>({...iu,...(u.data.find(x=>x.id===iu.id)||{})}));
+          // Also include any users added later that aren't in INITIAL_USERS
+          const existingIds = new Set(INITIAL_USERS.map(iu=>iu.id));
+          const newUsers = u.data.filter(x=>!existingIds.has(x.id));
+          setUsersRaw([...merged, ...newUsers]);
+        }
+        if(cl.data) setClientsRaw(cl.data);
+        if(co.data) setContentRaw(co.data);
+        if(ca.data) setCalendarRaw(ca.data);
+        if(lv.data) setLeavesRaw(lv.data);
+        if(at.data) setAttendanceRaw(at.data);
+        if(ms.data) setMessagesRaw(ms.data);
+        if(pl.data) {
+          const map={};
+          pl.data.forEach(r=>{ map[r.userId]=r.events||[]; });
+          setPlannerEventsRaw(map);
+        }
+      } catch(e){ console.warn("Load error:",e); }
       setDbReady(true);
     }
-    loadAll();
+    init();
   },[]);
 
-  // ── Real-time subscriptions (all tables) ───────────────────────────────────
+  // ── Real-time: subscribe to ALL table changes after DB is ready ───────────
   useEffect(()=>{
-    if(!dbReady) return;
-    const unsubs = [];
+    if(!dbReady || !supabase) return;
+    const sb = supabase;
+    const channels = [];
 
-    // Helper: refresh a whole table into state
-    async function refreshTable(table, setter, lsKey, transform) {
-      const data = await dbGet(table, []);
-      const val = transform ? transform(data) : data;
-      setter(val); lsSet(lsKey, val);
+    function sub(table, handler) {
+      const ch = supabase.channel(`rt-${table}-${Date.now()}`)
+        .on("postgres_changes",{event:"*",schema:"public",table}, handler)
+        .subscribe();
+      channels.push(ch);
     }
 
-    const tables = [
-      ["flow_clients",   setClientsRaw,   "flow_clients",   null],
-      ["flow_content",   setContentRaw,   "flow_content",   null],
-      ["flow_calendar",  setCalendarRaw,  "flow_calendar",  null],
-      ["flow_leaves",    setLeavesRaw,    "flow_leaves",    null],
-      ["flow_attendance",setAttendanceRaw,"flow_attendance", null],
-      ["flow_messages",  (data)=>{
+    // Messages — most important: append new, update existing
+    sub("flow_messages", (payload)=>{
+      if(payload.eventType==="INSERT") {
+        const msg = payload.new;
         setMessagesRaw(prev=>{
-          // Show notification for new messages
-          const newMsgs = data.filter(m=>!prev.find(p=>p.id===m.id));
-          newMsgs.forEach(msg=>{
-            const cu = currentUserRef.current;
-            if(cu && msg.fromId!==cu.id && (msg.toId==="all"||msg.toId===cu.id)) {
-              const sender = lsGet("flow_users",INITIAL_USERS).find(x=>x.id===msg.fromId);
-              setChatNotif({text:msg.text,from:sender?.displayName||sender?.name||"Someone"});
-              setTimeout(()=>setChatNotif(null),4000);
-            }
-          });
-          lsSet("flow_messages",data);
-          return data;
+          if(prev.find(m=>String(m.id)===String(msg.id))) return prev;
+          // Notify if message is for current user and not from them
+          const cu = currentUserRef.current;
+          if(cu && msg.fromId!==cu.id && (msg.toId==="all" || String(msg.toId)===String(cu.id))) {
+            const allUsers = [...INITIAL_USERS, ...(prev||[])];
+            const sender = allUsers.find(x=>x.id===msg.fromId);
+            setChatNotif({text:msg.text, from:sender?.displayName||sender?.name||"Someone"});
+            setTimeout(()=>setChatNotif(null),4000);
+          }
+          return [...prev, msg];
         });
-      }, "flow_messages", null],
-      ["flow_users",     (data)=>{
-        const mergedUsers = INITIAL_USERS.map(iu=>{
-          const dbU = data.find(x=>x.id===iu.id);
-          return dbU ? {...iu,...dbU} : iu;
-        });
-        setUsersRaw(mergedUsers); lsSet("flow_users",mergedUsers);
-      }, "flow_users", null],
-    ];
-
-    tables.forEach(([table, setter, lsKey, transform])=>{
-      if(typeof setter === "function" && typeof setter !== "object") {
-        dbSubscribe(table, ()=>refreshTable(table, setter, lsKey, transform))
-          .then(unsub=>unsubs.push(unsub));
-      } else {
-        // setter is actually a callback function for special handling
-        dbSubscribe(table, async ()=>{ const data=await dbGet(table,[]); setter(data); })
-          .then(unsub=>unsubs.push(unsub));
+      }
+      if(payload.eventType==="UPDATE") {
+        setMessagesRaw(prev=>prev.map(m=>m.id===payload.new.id?payload.new:m));
       }
     });
 
-    // Planner subscription
-    dbSubscribe("flow_planner", async ()=>{
-      const pl = await dbGet("flow_planner",[]);
-      const plannerMap={};
-      pl.forEach(row=>{ plannerMap[row.userId]=row.events||[]; });
-      setPlannerEventsRaw(plannerMap); lsSet("flow_planner",plannerMap);
-    }).then(unsub=>unsubs.push(unsub));
+    // Attendance — append/update
+    sub("flow_attendance", (payload)=>{
+      if(payload.eventType==="INSERT") {
+        setAttendanceRaw(prev=>{
+          if(prev.find(a=>a.id===payload.new.id)) return prev;
+          return [...prev, payload.new];
+        });
+      }
+      if(payload.eventType==="UPDATE") {
+        setAttendanceRaw(prev=>prev.map(a=>a.id===payload.new.id?payload.new:a));
+      }
+    });
 
-    return ()=>unsubs.forEach(fn=>{ try{fn();}catch{} });
+    // Clients
+    sub("flow_clients", (payload)=>{
+      if(payload.eventType==="INSERT") setClientsRaw(prev=>[...prev.filter(x=>x.id!==payload.new.id),payload.new]);
+      if(payload.eventType==="UPDATE") setClientsRaw(prev=>prev.map(x=>x.id===payload.new.id?payload.new:x));
+      if(payload.eventType==="DELETE") setClientsRaw(prev=>prev.filter(x=>x.id!==payload.old.id));
+    });
+
+    // Content
+    sub("flow_content", (payload)=>{
+      if(payload.eventType==="INSERT") setContentRaw(prev=>[...prev.filter(x=>x.id!==payload.new.id),payload.new]);
+      if(payload.eventType==="UPDATE") setContentRaw(prev=>prev.map(x=>x.id===payload.new.id?payload.new:x));
+      if(payload.eventType==="DELETE") setContentRaw(prev=>prev.filter(x=>x.id!==payload.old.id));
+    });
+
+    // Leaves
+    sub("flow_leaves", (payload)=>{
+      if(payload.eventType==="INSERT") setLeavesRaw(prev=>[...prev.filter(x=>x.id!==payload.new.id),payload.new]);
+      if(payload.eventType==="UPDATE") setLeavesRaw(prev=>prev.map(x=>x.id===payload.new.id?payload.new:x));
+    });
+
+    // Planner
+    sub("flow_planner", (payload)=>{
+      if(payload.new) {
+        setPlannerEventsRaw(prev=>({...prev,[payload.new.userId]:payload.new.events||[]}));
+      }
+    });
+
+    // Users
+    sub("flow_users", (payload)=>{
+      if(payload.new) {
+        setUsersRaw(prev=>prev.map(u=>u.id===payload.new.id?{...u,...payload.new}:u));
+      }
+    });
+
+    // Online presence
+    const presenceCh = supabase.channel("online_presence")
+      .on("presence","sync",()=>{
+        const state = presenceCh.presenceState();
+        const ids = Object.values(state).flatMap(s=>s.map(p=>p.userId)).filter(Boolean);
+        setOnlineIds([...new Set(ids)]);
+      })
+      .subscribe(async(status)=>{
+        if(status==="SUBSCRIBED" && currentUserRef.current) {
+          await presenceCh.track({userId:currentUserRef.current.id});
+        }
+      });
+    channels.push(presenceCh);
+  
+    return ()=>channels.forEach(ch=>{ try{ supabase.removeChannel(ch); }catch{} });
   },[dbReady]);
 
-  // ── Persist-aware setters (write to both Supabase + localStorage) ──────────
+  // ── Simple setters: update state + write to Supabase ─────────────────────
   async function setUsers(u) {
     const v=typeof u==="function"?u(users):u;
-    lsSet("flow_users",v); setUsersRaw(v);
-    // Upsert each user row
-    for(const usr of v) await dbUpsert("flow_users", {id:usr.id,name:usr.name,displayName:usr.displayName,username:usr.username,password:usr.password,role:usr.role,avatar:usr.avatar,email:usr.email});
+    setUsersRaw(v);
+        for(const usr of v) {
+      await supabase.from("flow_users").upsert({id:usr.id,name:usr.name,displayName:usr.displayName,username:usr.username,password:usr.password,role:usr.role,avatar:usr.avatar,email:usr.email},{onConflict:"id"});
+    }
   }
   async function setClients(u) {
     const v=typeof u==="function"?u(clients):u;
-    lsSet("flow_clients",v); setClientsRaw(v);
-    await dbUpsert("flow_clients", v);
+    setClientsRaw(v);
+        for(const row of v) await supabase.from("flow_clients").upsert(row,{onConflict:"id"});
   }
   async function setContent(u) {
     const v=typeof u==="function"?u(content):u;
-    lsSet("flow_content",v); setContentRaw(v);
-    await dbUpsert("flow_content", v);
+    setContentRaw(v);
+        for(const row of v) await supabase.from("flow_content").upsert(row,{onConflict:"id"});
   }
   async function setCalendar(u) {
     const v=typeof u==="function"?u(calendar):u;
-    lsSet("flow_calendar",v); setCalendarRaw(v);
-    await dbUpsert("flow_calendar", v);
+    setCalendarRaw(v);
+        for(const row of v) await supabase.from("flow_calendar").upsert(row,{onConflict:"id"});
   }
   async function setLeaves(u) {
     const v=typeof u==="function"?u(leaves):u;
-    lsSet("flow_leaves",v); setLeavesRaw(v);
-    await dbUpsert("flow_leaves", v);
+    setLeavesRaw(v);
+        for(const row of v) await supabase.from("flow_leaves").upsert(row,{onConflict:"id"});
   }
   async function setAttendance(u) {
     const v=typeof u==="function"?u(attendance):u;
-    lsSet("flow_attendance",v); setAttendanceRaw(v);
-    // Upsert each attendance row individually (unique on userId+date)
-    const arr=Array.isArray(v)?v:[v];
-    for(const row of arr) {
-      if(row.userId && row.date) await dbUpsert("flow_attendance", row, "id");
-    }
+    setAttendanceRaw(v);
+        for(const row of v) if(row.id) await supabase.from("flow_attendance").upsert(row,{onConflict:"id"});
   }
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+
   async function setMessages(u) {
-    const prev=messages;
-    const v=typeof u==="function"?u(prev):u;
-    lsSet("flow_messages",v); setMessagesRaw(v);
-    if(v.length>prev.length) {
-      const newMsg=v[v.length-1];
-      await dbUpsert("flow_messages", newMsg);
+    const prev = messagesRef.current;
+    const v = typeof u === "function" ? u(prev) : u;
+    setMessagesRaw(v);
+    messagesRef.current = v;
+    if (v.length > prev.length) {
+      const prevIds = new Set(prev.map(m => m.id));
+      const newMsgs = v.filter(m => !prevIds.has(m.id));
+      for (const msg of newMsgs) {
+        try {
+          await supabase.from("flow_messages").insert(msg);
+        } catch (e) {
+          console.warn("Message insert error:", e);
+        }
+      }
     }
   }
   async function setPlannerEvents(u) {
     const v=typeof u==="function"?u(plannerEvents):u;
-    lsSet("flow_planner",v); setPlannerEventsRaw(v);
-    // Store as rows: {userId, events:[]}
-    const rows=Object.entries(v).map(([uid,evs])=>({userId:parseInt(uid),events:evs,id:parseInt(uid)}));
-    for(const row of rows) await dbUpsert("flow_planner", row, "userId");
+    setPlannerEventsRaw(v);
+        for(const [uid,evs] of Object.entries(v)) {
+      await supabase.from("flow_planner").upsert({id:parseInt(uid),userId:parseInt(uid),events:evs},{onConflict:"userId"});
+    }
   }
 
-  // ── Online presence via Supabase realtime ──────────────────────────────────
-  useEffect(()=>{
-    if(!user||!dbReady) return;
-    currentUserRef.current = user;
-    setOnlineIds([user.id]);
-
-    // Broadcast presence
-    getSB().then(sb=>{
-      if(!sb) return;
-      try {
-        const channel = sb.channel("online_presence")
-          .on("presence","sync",()=>{
-            const state=channel.presenceState();
-            const ids=Object.values(state).flatMap(s=>s.map(p=>p.userId)).filter(Boolean);
-            setOnlineIds([...new Set(ids)]);
-          })
-          .subscribe(async (status)=>{
-            if(status==="SUBSCRIBED") {
-              await channel.track({userId:user.id,name:user.displayName||user.name});
-            }
-          });
-        return ()=>sb.removeChannel(channel);
-      } catch {}
-    });
-  },[user,dbReady]);
-
-  // ── When user logs in ──────────────────────────────────────────────────────
+  // ── When user logs in, start presence tracking ────────────────────────────
   function handleLogin(loggedUser) {
-    // Re-read latest user data from state (may have been updated)
     const freshUser = users.find(u=>u.id===loggedUser.id)||loggedUser;
     setUser(freshUser);
+    lsSet("flow_user",freshUser);
     currentUserRef.current = freshUser;
+    setOnlineIds(prev=>[...new Set([...prev,freshUser.id])]);
+    // Track presence
+    if(supabase) {
+      try {
+        const ch = channelsRef.current.find(c=>c.topic==="realtime:online_presence");
+        if(ch) ch.track({userId:freshUser.id});
+      } catch{}
+    }
   }
 
   // ── Wave animation ─────────────────────────────────────────────────────────
@@ -2853,7 +2879,7 @@ export default function App() {
             <div className="topbar-right">
               <button className="icon-btn" title="Toggle Theme" onClick={()=>handleSetDark(p=>!p)}>{dark?"☀":"🌙"}</button>
               <div className="flex items-center gap-8"><div className="avatar sm">{user.avatar}</div><span style={{fontSize:12,fontWeight:500,color:"var(--ink)"}}>{user.displayName||user.name}</span></div>
-              <button className="btn btn-ghost btn-sm" onClick={()=>{setUser(null);setOnlineIds([]);}}>Sign Out</button>
+              <button className="btn btn-ghost btn-sm" onClick={()=>{setUser(null);lsSet("flow_user",null);setOnlineIds([]);}}>Sign Out</button>
             </div>
           </div>
           <div className="content" style={{paddingRight:0}}>
