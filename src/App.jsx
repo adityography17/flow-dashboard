@@ -1947,7 +1947,7 @@ function HR({ user, leaves, setLeaves, attendance, users }) {
                   const isPast=date<todayISO();
                   const isToday=date===todayISO();
                   if(leave) return <span key={emp.id} className="hr-day-chip chip-leave" title="On Leave">{(emp.displayName||emp.name).split(" ")[0]}</span>;
-                  if(pres) return <span key={emp.id} className="hr-day-chip chip-present" title={`In: ${pres.login}${pres.logout?" | Out: "+pres.logout:""}`}>{(emp.displayName||emp.name).split(" ")[0]} ✓</span>;
+                  if(pres) return <span key={emp.id} className="hr-day-chip chip-present" title={`In: ${pres.login}${pres.logout?" | Out: "+pres.logout:""}`}>{(emp.displayName||emp.name).split(" ")[0]} ✓ <span style={{fontSize:8,opacity:0.7}}>{pres.login}</span></span>;
                   if(isWeekend) return null;
                   if(isPast||isToday) return <span key={emp.id} className="hr-day-chip chip-absent" title="Absent">{(emp.displayName||emp.name).split(" ")[0]}</span>;
                   return null; // future dates — don't mark absent
@@ -2606,20 +2606,25 @@ export default function App() {
     if(user) currentUserRef.current = user;
   },[user]);
 
-  // Presence heartbeat: re-track every 10s to keep status alive
+  // Presence heartbeat: track aggressively at startup, then every 15s
   useEffect(()=>{
     if(!user || !dbReady) return;
     function trackPresence() {
       const ch = channelsRef.current.find(c=>c.topic?.includes("flow-presence"));
       if(ch) {
-        ch.track({userId:Number(user.id)}).catch(()=>{});
+        ch.track({userId:Number(user.id)}).then(()=>{
+          console.log("Heartbeat tracked user:",user.id);
+        }).catch(()=>{});
       }
     }
-    // Initial track with delay (wait for channel to subscribe)
-    const initTimer = setTimeout(trackPresence, 3000);
-    // Heartbeat every 10 seconds
-    const heartbeat = setInterval(trackPresence, 10000);
-    return ()=>{ clearTimeout(initTimer); clearInterval(heartbeat); };
+    // Rapid initial attempts at 1s, 2s, 4s, 6s to catch channel subscription
+    const t1 = setTimeout(trackPresence, 1000);
+    const t2 = setTimeout(trackPresence, 2000);
+    const t3 = setTimeout(trackPresence, 4000);
+    const t4 = setTimeout(trackPresence, 6000);
+    // Then steady heartbeat every 15 seconds
+    const heartbeat = setInterval(trackPresence, 15000);
+    return ()=>{ clearTimeout(t1);clearTimeout(t2);clearTimeout(t3);clearTimeout(t4);clearInterval(heartbeat); };
   },[user, dbReady]);
 
   // ── Connect to Supabase and load all data once on mount ───────────────────
