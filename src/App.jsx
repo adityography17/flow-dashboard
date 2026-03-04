@@ -797,7 +797,7 @@ function ChatPanel({ user, users, messages, setMessages, onlineIds, open }) {
               </div>
               {others.map(u=>{
                 const isOnline=onlineIds.includes(u.id);
-                const lastMsg=messages.filter(m=>(m.fromId===u.id&&m.toId===user.id)||(m.fromId===user.id&&m.toId===u.id)).slice(-1)[0];
+                const lastMsg=messages.filter(m=>(String(m.fromId)===String(u.id)&&String(m.toId)===String(user.id))||(String(m.fromId)===String(user.id)&&String(m.toId)===String(u.id))).slice(-1)[0];
                 return(
                   <div key={u.id} className="chat-contact" onClick={()=>setThread(u.id)}>
                     <div style={{position:"relative"}}>
@@ -2508,7 +2508,7 @@ function ChatPage({ user, users, messages, setMessages, onlineIds }) {
 
           {filteredOthers.map(u=>{
             const isOnline=onlineIds.includes(u.id);
-            const lastMsg=messages.filter(m=>(String(m.fromId)===String(u.id)&&m.toId===user.id)||(m.fromId===user.id&&String(m.toId)===String(u.id))).slice(-1)[0];
+            const lastMsg=messages.filter(m=>(String(m.fromId)===String(u.id)&&String(m.toId)===String(user.id))||(String(m.fromId)===String(user.id)&&String(m.toId)===String(u.id))).slice(-1)[0];
             const unread=unreadCount(u.id);
             const isActive=String(thread)===String(u.id);
             return(
