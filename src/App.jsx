@@ -704,40 +704,189 @@ function Sidebar({ user, active, setActive, pendingCount, chatUnread }) {
 }
 
 // ─── VIDEO CALL ────────────────────────────────────────────────────────────────
-function VideoCallModal({ participants, onEnd }) {
+function VideoCallModal({ participants, callType, onEnd, supabase, currentUser }) {
   const [muted,setMuted]=useState(false);
-  const [videoOff,setVideoOff]=useState(false);
+  const [videoOff,setVideoOff]=useState(callType==="audio");
   const [elapsed,setElapsed]=useState(0);
+  const [status,setStatus]=useState("connecting");
+  const [remoteStream,setRemoteStream]=useState(null);
+  const localVideoRef=useRef(null);
+  const remoteVideoRef=useRef(null);
+  const pcRef=useRef(null);
+  const localStreamRef=useRef(null);
+  const signalChannelRef=useRef(null);
+
   useEffect(()=>{const iv=setInterval(()=>setElapsed(p=>p+1),1000);return()=>clearInterval(iv);},[]);
   const fmt=s=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
+
+  // WebRTC setup
+  useEffect(()=>{
+    if(!supabase||!currentUser||participants.length<2) return;
+    const remoteUser=participants.find(p=>String(p.id)!==String(currentUser.id));
+    if(!remoteUser) return;
+
+    const isCaller=Number(currentUser.id)<Number(remoteUser.id);
+    const roomId=[currentUser.id,remoteUser.id].sort().join("-");
+    const channelName="call-"+roomId;
+
+    const turnUrl = typeof import.meta !== "undefined" ? import.meta.env?.VITE_TURN_URL : null;
+    const turnUser = typeof import.meta !== "undefined" ? import.meta.env?.VITE_TURN_USER : null;
+    const turnPass = typeof import.meta !== "undefined" ? import.meta.env?.VITE_TURN_PASS : null;
+    const iceServers=[
+      {urls:"stun:stun.l.google.com:19302"},
+      {urls:"stun:stun1.l.google.com:19302"},
+      ...(turnUrl?[{urls:turnUrl,username:turnUser,credential:turnPass}]:[])
+    ];
+
+    const pc=new RTCPeerConnection({iceServers});
+    pcRef.current=pc;
+
+    // Get local media
+    navigator.mediaDevices.getUserMedia({
+      video:callType==="video",
+      audio:true
+    }).then(stream=>{
+      localStreamRef.current=stream;
+      if(localVideoRef.current) localVideoRef.current.srcObject=stream;
+      stream.getTracks().forEach(t=>pc.addTrack(t,stream));
+      if(callType==="audio") stream.getVideoTracks().forEach(t=>t.enabled=false);
+    }).catch(e=>{
+      console.warn("Media error:",e);
+      setStatus("Media access denied");
+    });
+
+    // Handle remote stream
+    pc.ontrack=(e)=>{
+      setRemoteStream(e.streams[0]);
+      if(remoteVideoRef.current) remoteVideoRef.current.srcObject=e.streams[0];
+      setStatus("connected");
+    };
+
+    pc.oniceconnectionstatechange=()=>{
+      if(pc.iceConnectionState==="connected"||pc.iceConnectionState==="completed") setStatus("connected");
+      if(pc.iceConnectionState==="disconnected"||pc.iceConnectionState==="failed") setStatus("disconnected");
+    };
+
+    // Signaling via Supabase channel
+    const sigCh=supabase.channel(channelName);
+    signalChannelRef.current=sigCh;
+
+    sigCh.on("broadcast",{event:"signal"},(payload)=>{
+      const msg=payload.payload;
+      if(String(msg.from)===String(currentUser.id)) return;
+      if(msg.type==="offer"&&!isCaller){
+        pc.setRemoteDescription(new RTCSessionDescription(msg.sdp))
+          .then(()=>pc.createAnswer())
+          .then(a=>pc.setLocalDescription(a))
+          .then(()=>{
+            sigCh.send({type:"broadcast",event:"signal",payload:{type:"answer",sdp:pc.localDescription,from:currentUser.id}});
+          }).catch(e=>console.warn("Answer error:",e));
+      }
+      if(msg.type==="answer"&&isCaller){
+        pc.setRemoteDescription(new RTCSessionDescription(msg.sdp)).catch(e=>console.warn("Set answer error:",e));
+      }
+      if(msg.type==="ice"&&msg.candidate){
+        pc.addIceCandidate(new RTCIceCandidate(msg.candidate)).catch(()=>{});
+      }
+      if(msg.type==="hangup"){
+        cleanup();
+        onEnd();
+      }
+    }).subscribe((st)=>{
+      if(st==="SUBSCRIBED"){
+        setStatus("waiting");
+        // Send ICE candidates
+        pc.onicecandidate=(e)=>{
+          if(e.candidate){
+            sigCh.send({type:"broadcast",event:"signal",payload:{type:"ice",candidate:e.candidate,from:currentUser.id}});
+          }
+        };
+        // Caller creates offer after a short delay
+        if(isCaller){
+          setTimeout(()=>{
+            pc.createOffer().then(o=>pc.setLocalDescription(o)).then(()=>{
+              sigCh.send({type:"broadcast",event:"signal",payload:{type:"offer",sdp:pc.localDescription,from:currentUser.id}});
+              setStatus("ringing");
+            }).catch(e=>console.warn("Offer error:",e));
+          },1500);
+        }
+      }
+    });
+
+    return ()=>cleanup();
+  },[]);
+
+  function cleanup(){
+    if(localStreamRef.current) localStreamRef.current.getTracks().forEach(t=>t.stop());
+    if(pcRef.current) try{pcRef.current.close();}catch{}
+    if(signalChannelRef.current){
+      try{
+        signalChannelRef.current.send({type:"broadcast",event:"signal",payload:{type:"hangup",from:currentUser.id}});
+        supabase.removeChannel(signalChannelRef.current);
+      }catch{}
+    }
+  }
+
+  function toggleMute(){
+    if(localStreamRef.current){
+      localStreamRef.current.getAudioTracks().forEach(t=>t.enabled=muted);
+      setMuted(!muted);
+    }
+  }
+
+  function toggleVideo(){
+    if(localStreamRef.current){
+      localStreamRef.current.getVideoTracks().forEach(t=>t.enabled=videoOff);
+      setVideoOff(!videoOff);
+    }
+  }
+
+  function endCall(){
+    cleanup();
+    onEnd();
+  }
+
+  const remoteUser=participants.find(p=>String(p.id)!==String(currentUser?.id));
+  const statusText=status==="connecting"?"Connecting...":status==="waiting"?"Waiting for peer...":status==="ringing"?"Ringing...":status==="connected"?fmt(elapsed):status==="disconnected"?"Call ended":"";
   const colors=["#C4954A","#2E5F8A","#4A7C59","#9B3A3A"];
+
   return(
     <div className="video-call-modal">
       <div className="vc-header">
         <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <div style={{width:8,height:8,borderRadius:"50%",background:"#4ADE80",animation:"pulse 1.5s ease-in-out infinite"}} />
+          <div style={{width:8,height:8,borderRadius:"50%",background:status==="connected"?"#4ADE80":"#F59E0B",animation:"pulse 1.5s ease-in-out infinite"}} />
           <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:18,color:"white",fontWeight:600}}>Flow Meet</span>
-          <span style={{fontSize:12,color:"rgba(255,255,255,0.5)"}}>{fmt(elapsed)}</span>
+          <span style={{fontSize:12,color:"rgba(255,255,255,0.5)"}}>{statusText}</span>
         </div>
-        <span style={{fontSize:11,color:"rgba(255,255,255,0.4)"}}>End-to-end encrypted · {participants.length} participants</span>
+        <span style={{fontSize:11,color:"rgba(255,255,255,0.4)"}}>{callType==="video"?"Video Call":"Audio Call"} · {participants.length} participants</span>
       </div>
-      <div className="vc-grid" style={{gridTemplateColumns:participants.length<=2?"1fr 1fr":`repeat(${Math.min(participants.length,3)},1fr)`}}>
-        {participants.map((p,i)=>(
-          <div key={p.id} className="vc-tile">
-            <div style={{width:72,height:72,borderRadius:"50%",background:colors[i%4],display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Cormorant Garamond',serif",fontSize:26,color:"white",fontWeight:700,boxShadow:`0 0 0 3px ${colors[i%4]}44`}}>{p.avatar}</div>
-            <div style={{fontSize:12,color:"rgba(255,255,255,0.6)"}}>{videoOff&&i===0?"Camera Off":""}</div>
-            <div className="vc-tile-name">{p.name}{i===0?" (You)":""}</div>
-            {/* Subtle animated ring for active speaker */}
-            {i===0&&<div style={{position:"absolute",inset:0,border:"2px solid #4ADE80",borderRadius:4,opacity:0.3,animation:"pulse 2s ease-in-out infinite"}} />}
-          </div>
-        ))}
+      <div className="vc-grid" style={{gridTemplateColumns:callType==="video"?"1fr 1fr":"1fr"}}>
+        {/* Local video/audio tile */}
+        <div className="vc-tile" style={{overflow:"hidden"}}>
+          {callType==="video"&&!videoOff?(
+            <video ref={localVideoRef} autoPlay muted playsInline style={{width:"100%",height:"100%",objectFit:"cover",transform:"scaleX(-1)"}} />
+          ):(
+            <div style={{width:72,height:72,borderRadius:"50%",background:colors[0],display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Cormorant Garamond',serif",fontSize:26,color:"white",fontWeight:700}}>{currentUser?.avatar}</div>
+          )}
+          <div className="vc-tile-name">{currentUser?.name||currentUser?.displayName} (You){muted?" 🔇":""}</div>
+        </div>
+        {/* Remote video/audio tile */}
+        <div className="vc-tile" style={{overflow:"hidden"}}>
+          {callType==="video"&&remoteStream?(
+            <video ref={remoteVideoRef} autoPlay playsInline style={{width:"100%",height:"100%",objectFit:"cover"}} />
+          ):(
+            <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:10}}>
+              <div style={{width:72,height:72,borderRadius:"50%",background:colors[1],display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Cormorant Garamond',serif",fontSize:26,color:"white",fontWeight:700}}>{remoteUser?.avatar}</div>
+              {status!=="connected"&&<div style={{fontSize:13,color:"rgba(255,255,255,0.5)"}}>{statusText}</div>}
+            </div>
+          )}
+          <div className="vc-tile-name">{remoteUser?.name||remoteUser?.displayName}</div>
+        </div>
       </div>
       <div className="vc-controls">
-        <button className={`vc-btn ${muted?"vc-btn-red":"vc-btn-gray"}`} onClick={()=>setMuted(p=>!p)} title={muted?"Unmute":"Mute"}>{muted?"🔇":"🎤"}</button>
-        <button className={`vc-btn ${videoOff?"vc-btn-red":"vc-btn-gray"}`} onClick={()=>setVideoOff(p=>!p)} title="Toggle Camera">{videoOff?"📵":"📷"}</button>
-        <button className="vc-btn vc-btn-gray" title="Share Screen">🖥</button>
-        <button className="vc-btn vc-btn-green" title="Chat">💬</button>
-        <button className="vc-btn vc-btn-red" onClick={onEnd} title="End Call">📵</button>
+        <button className={`vc-btn ${muted?"vc-btn-red":"vc-btn-gray"}`} onClick={toggleMute} title={muted?"Unmute":"Mute"}>{muted?"🔇":"🎤"}</button>
+        {callType==="video"&&<button className={`vc-btn ${videoOff?"vc-btn-red":"vc-btn-gray"}`} onClick={toggleVideo} title="Toggle Camera">{videoOff?"📵":"📷"}</button>}
+        <button className="vc-btn vc-btn-red" onClick={endCall} title="End Call" style={{width:56,height:56,fontSize:22}}>📞</button>
       </div>
     </div>
   );
@@ -762,8 +911,18 @@ function ChatPanel({ user, users, messages, setMessages, onlineIds, open }) {
     setMessages(p=>[...p,msg]);
     setInput("");
   }
-  function startCall(type,participants){
-    setCall({type,participants:[users.find(u=>u.id===user.id),...participants]});
+    function startCall(type,participants){
+    setCall({type,participants:[users.find(u=>String(u.id)===String(user.id)),...participants]});
+    // Signal the remote user that a call is incoming
+    if(supabase && participants.length===1) {
+      const remote = participants[0];
+      const roomId = [user.id,remote.id].sort().join("-");
+      const caller = users.find(u=>String(u.id)===String(user.id));
+      supabase.channel("call-signals").send({
+        type:"broadcast",event:"call-ring",
+        payload:{toId:remote.id,from:caller,callType:type,roomId}
+      }).catch(()=>{});
+    }
   }
 
   const others=users.filter(u=>u.id!==user.id);
@@ -771,7 +930,7 @@ function ChatPanel({ user, users, messages, setMessages, onlineIds, open }) {
 
   return(
     <>
-      {call&&<VideoCallModal participants={call.participants} callType={call.type} onEnd={()=>setCall(null)} />}
+      {call&&<VideoCallModal participants={call.participants} callType={call.type} onEnd={()=>setCall(null)} supabase={supabase} currentUser={user} />}
       <div className={`chat-panel ${open?"open":""}`}>
         <div style={{height:4,background:"linear-gradient(90deg,#C4954A,#E8C88A,#4A7C59,#2E5F8A)",flexShrink:0}} />
         {!thread?(
@@ -2486,7 +2645,17 @@ function ChatPage({ user, users, messages, setMessages, onlineIds }) {
   }
 
   function startCall(type,participants){
-    setCall({type,participants:[users.find(u=>u.id===user.id),...participants.filter(Boolean)]});
+    setCall({type,participants:[users.find(u=>String(u.id)===String(user.id)),...participants.filter(Boolean)]});
+    // Signal the remote user
+    if(supabase && participants.length===1 && participants[0]) {
+      const remote = participants[0];
+      const roomId = [user.id,remote.id].sort().join("-");
+      const caller = users.find(u=>String(u.id)===String(user.id));
+      supabase.channel("call-signals").send({
+        type:"broadcast",event:"call-ring",
+        payload:{toId:remote.id,from:caller,callType:type,roomId}
+      }).catch(()=>{});
+    }
   }
 
   const others  = users.filter(u=>u.id!==user.id);
@@ -2511,7 +2680,7 @@ function ChatPage({ user, users, messages, setMessages, onlineIds }) {
 
   return(
     <div style={{display:"grid",gridTemplateColumns:"260px 1fr",height:"calc(100vh - 112px)",margin:"-24px",overflow:"hidden"}}>
-      {call&&<VideoCallModal participants={call.participants} callType={call.type} onEnd={()=>setCall(null)} />}
+      {call&&<VideoCallModal participants={call.participants} callType={call.type} onEnd={()=>setCall(null)} supabase={supabase} currentUser={user} />}
 
       {/* ── LEFT SIDEBAR ── */}
       <div style={{background:"var(--surface)",borderRight:"1px solid var(--border)",display:"flex",flexDirection:"column",overflow:"hidden"}}>
@@ -2748,6 +2917,7 @@ export default function App() {
   const [messages,setMessagesRaw]  = useState([]);
   const [plannerEvents,setPlannerEventsRaw] = useState({});
   const [onlineIds,setOnlineIds]   = useState([]);
+  const [incomingCall,setIncomingCall] = useState(null); // {from, type, roomId}
   const [phase,setPhase]           = useState(0);
   const [chatNotif,setChatNotif]   = useState(null);
   const [dbReady,setDbReady]       = useState(false);
@@ -2912,6 +3082,20 @@ export default function App() {
     });
 
     channelsRef.current = channels;
+
+    // Listen for incoming calls
+    const callCh = sb.channel("call-signals");
+    callCh.on("broadcast",{event:"call-ring"},(payload)=>{
+      const msg = payload.payload;
+      const cu = currentUserRef.current;
+      if(!cu) return;
+      if(String(msg.toId)===String(cu.id)) {
+        setIncomingCall({from:msg.from, type:msg.callType, roomId:msg.roomId});
+        // Auto-dismiss after 30 seconds
+        setTimeout(()=>setIncomingCall(prev=>prev?.roomId===msg.roomId?null:prev),30000);
+      }
+    }).subscribe();
+    channels.push(callCh);
   
     return ()=>channels.forEach(ch=>{ try{ supabase.removeChannel(ch); }catch{} });
   },[dbReady, user?.id]);
@@ -3059,6 +3243,31 @@ export default function App() {
             {active==="assessment"&&user.role==="superadmin"&&<div style={{paddingRight:24}}><Assessment attendance={attendance} leaves={leaves} content={content} users={users} /></div>}
             {active==="notes"&&<div style={{paddingRight:24}}><PlannerCalendar user={user} plannerEvents={plannerEvents} setPlannerEvents={setPlannerEvents} /></div>}
             {active==="logins"&&user.role==="superadmin"&&<div style={{paddingRight:24}}><UserLogins users={users} setUsers={setUsers} currentUser={user} setCurrentUser={setUser} /></div>}
+            {/* Incoming call notification */}
+            {incomingCall&&!call&&(
+              <div style={{position:"fixed",top:20,right:20,zIndex:500,background:"var(--surface)",border:"2px solid var(--accent)",borderRadius:16,padding:20,boxShadow:"0 8px 32px rgba(0,0,0,0.25)",minWidth:280,animation:"slideIn 0.3s ease"}}>
+                <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
+                  <div style={{width:48,height:48,borderRadius:"50%",background:"var(--accent)",display:"flex",alignItems:"center",justifyContent:"center",color:"white",fontSize:18,fontWeight:700}}>{incomingCall.from?.avatar}</div>
+                  <div>
+                    <div style={{fontWeight:700,fontSize:14,color:"var(--ink)"}}>{incomingCall.from?.name||incomingCall.from?.displayName}</div>
+                    <div style={{fontSize:12,color:"var(--ink-muted)"}}>{incomingCall.type==="video"?"Video Call":"Audio Call"} incoming...</div>
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:12,justifyContent:"center"}}>
+                  <button onClick={()=>{
+                    const remote=incomingCall.from;
+                    const me=users.find(u=>String(u.id)===String(user.id));
+                    setCall({type:incomingCall.type,participants:[me,remote]});
+                    setIncomingCall(null);
+                  }} style={{padding:"10px 24px",borderRadius:30,background:"#27AE60",color:"white",border:"none",cursor:"pointer",fontWeight:700,fontSize:13}}>
+                    {incomingCall.type==="video"?"📹 Accept":"📞 Accept"}
+                  </button>
+                  <button onClick={()=>setIncomingCall(null)} style={{padding:"10px 24px",borderRadius:30,background:"#E74C3C",color:"white",border:"none",cursor:"pointer",fontWeight:700,fontSize:13}}>
+                    Decline
+                  </button>
+                </div>
+              </div>
+            )}
             {active==="chat"&&<ChatPage user={user} users={users} messages={messages} setMessages={setMessages} onlineIds={onlineIds} />}
             {active==="settings"&&<div style={{paddingRight:24}}><Settings user={user} users={users} setUsers={setUsers} dark={dark} setDark={handleSetDark} onPasswordChange={handlePasswordChange} /></div>}
           </div>
