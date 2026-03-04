@@ -1780,7 +1780,7 @@ function Approvals({ user, clients, content, setContent, users }) {
 }
 
 // ─── PUNCH ────────────────────────────────────────────────────────────────────
-function PunchPage({ user, attendance, setAttendance }) {
+function PunchPage({ user, users=[], attendance, setAttendance }) {
   const [clock,setClock]=useState(nowStr());
   const [punchedIn,setPunchedIn]=useState(false);
   const [loginTime,setLoginTime]=useState(null);
@@ -1840,6 +1840,16 @@ function PunchPage({ user, attendance, setAttendance }) {
 
   const myRec=attendance.filter(a=>a.userId===user.id).slice(-7).reverse();
   const todayRec=attendance.find(a=>a.userId===user.id&&a.date===todayISO());
+  const isSA=user.role==="superadmin"||user.role==="admin";
+  const teamMembers=users.filter(u=>u.id!==user.id);
+  // Get last 3 months of dates
+  const threeMonthsAgo=new Date();threeMonthsAgo.setMonth(threeMonthsAgo.getMonth()-3);
+  const teamAttendance=attendance.filter(a=>{
+    const d=new Date(a.date);
+    return d>=threeMonthsAgo && teamMembers.some(u=>u.id===a.userId);
+  }).sort((a,b)=>b.date.localeCompare(a.date));
+  const [attMonth,setAttMonth]=useState(()=>({year:new Date().getFullYear(),month:new Date().getMonth()}));
+  const [selMember,setSelMember]=useState("all");
 
   return(<div>
     <div className="section-header"><h1 className="section-title">Attendance</h1></div>
@@ -1883,7 +1893,7 @@ function PunchPage({ user, attendance, setAttendance }) {
         )}
       </div>
       <div className="card">
-        <h3 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:15,fontWeight:600,marginBottom:12,color:"var(--ink)"}}>Recent Attendance</h3>
+        <h3 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:15,fontWeight:600,marginBottom:12,color:"var(--ink)"}}>My Recent Attendance</h3>
         {myRec.length===0?<p className="text-muted text-sm">No records.</p>:(
           <table className="table"><thead><tr><th>Date</th><th>Login</th><th>Logout</th><th>Photo</th></tr></thead>
           <tbody>{myRec.map((r,i)=><tr key={i}>
@@ -1894,6 +1904,81 @@ function PunchPage({ user, attendance, setAttendance }) {
           </tr>)}</tbody></table>
         )}
       </div>
+    </div>
+
+    {/* ── Team Attendance (3 months) — visible to Admin/SuperAdmin ── */}
+    {isSA&&(<div style={{marginTop:20}}>
+      <div className="card">
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:12}}>
+          <h3 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:18,fontWeight:700,color:"var(--ink)"}}>Team Attendance — Last 3 Months</h3>
+          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+            <select value={selMember} onChange={e=>setSelMember(e.target.value)} style={{padding:"6px 12px",borderRadius:8,border:"1px solid var(--border)",background:"var(--surface)",color:"var(--ink)",fontSize:12}}>
+              <option value="all">All Members</option>
+              {teamMembers.map(u=><option key={u.id} value={u.id}>{u.displayName||u.name}</option>)}
+            </select>
+            <div style={{display:"flex",gap:4}}>
+              <button className="btn btn-ghost btn-sm" onClick={()=>setAttMonth(p=>p.month===0?{year:p.year-1,month:11}:{...p,month:p.month-1})}>‹</button>
+              <span style={{fontSize:13,fontWeight:600,color:"var(--ink)",minWidth:120,textAlign:"center"}}>{MONTH_NAMES[attMonth.month]} {attMonth.year}</span>
+              <button className="btn btn-ghost btn-sm" onClick={()=>setAttMonth(p=>p.month===11?{year:p.year+1,month:0}:{...p,month:p.month+1})}>›</button>
+            </div>
+          </div>
+        </div>
+        {(()=>{
+          const daysInMonth=new Date(attMonth.year,attMonth.month+1,0).getDate();
+          const members=selMember==="all"?teamMembers:teamMembers.filter(u=>String(u.id)===String(selMember));
+          const monthStr=m=>`${attMonth.year}-${String(attMonth.month+1).padStart(2,"0")}-${String(m).padStart(2,"0")}`;
+          return(
+            <div style={{overflowX:"auto"}}>
+              <table className="table" style={{fontSize:12}}>
+                <thead>
+                  <tr>
+                    <th style={{position:"sticky",left:0,background:"var(--surface)",zIndex:2,minWidth:120}}>Member</th>
+                    {Array.from({length:daysInMonth},(_,i)=>{
+                      const d=new Date(attMonth.year,attMonth.month,i+1);
+                      const isWeekend=d.getDay()===0||d.getDay()===6;
+                      const isToday=monthStr(i+1)===todayISO();
+                      return <th key={i} style={{textAlign:"center",minWidth:44,fontSize:10,background:isToday?"var(--accent-pale)":isWeekend?"var(--cream-dark)":"transparent",color:isWeekend?"var(--ink-muted)":"var(--ink)"}}>{i+1}<br/><span style={{fontSize:8}}>{["S","M","T","W","T","F","S"][d.getDay()]}</span></th>;
+                    })}
+                    <th style={{textAlign:"center",minWidth:50}}>Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {members.map(emp=>{
+                    let total=0;
+                    return(
+                      <tr key={emp.id}>
+                        <td style={{position:"sticky",left:0,background:"var(--surface)",zIndex:1,fontWeight:600,fontSize:12}}>{emp.displayName||emp.name}</td>
+                        {Array.from({length:daysInMonth},(_,i)=>{
+                          const dateStr=monthStr(i+1);
+                          const rec=attendance.find(a=>a.userId===emp.id&&a.date===dateStr);
+                          const d=new Date(attMonth.year,attMonth.month,i+1);
+                          const isWeekend=d.getDay()===0||d.getDay()===6;
+                          const isFuture=dateStr>todayISO();
+                          if(rec){total++;}
+                          return <td key={i} style={{textAlign:"center",padding:"6px 2px",background:rec?"rgba(62,125,82,0.12)":isWeekend?"var(--cream-dark)":"transparent"}} title={rec?`In: ${rec.login||"?"} Out: ${rec.logout||"—"}`:""}>
+                            {rec?<span style={{color:"var(--success)",fontWeight:700,fontSize:11}} title={`${rec.login}`}>✓</span>
+                              :isFuture?<span style={{color:"var(--ink-muted)",fontSize:9}}>—</span>
+                              :isWeekend?<span style={{color:"var(--ink-muted)",fontSize:9}}>W</span>
+                              :<span style={{color:"var(--danger)",fontSize:10}}>✗</span>}
+                          </td>;
+                        })}
+                        <td style={{textAlign:"center",fontWeight:700,color:"var(--accent)"}}>{total}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          );
+        })()}
+        <div style={{marginTop:12,display:"flex",gap:16,fontSize:11,color:"var(--ink-muted)"}}>
+          <span><span style={{color:"var(--success)",fontWeight:700}}>✓</span> Present</span>
+          <span><span style={{color:"var(--danger)"}}>✗</span> Absent</span>
+          <span><span style={{color:"var(--ink-muted)"}}>W</span> Weekend</span>
+          <span>Hover on ✓ for login time</span>
+        </div>
+      </div>
+    </div>)}
     </div>
   </div>);
 }
@@ -2939,7 +3024,7 @@ export default function App() {
             {active==="calendar"&&<div style={{paddingRight:24}}><ContentCalendar user={user} clients={clients} calendar={calendar} setCalendar={setCalendar} users={users} /></div>}
             {active==="content"&&<div style={{paddingRight:24}}><Content user={user} clients={clients} content={content} setContent={setContent} users={users} /></div>}
             {active==="approvals"&&(user.role==="admin"||user.role==="superadmin")&&<div style={{paddingRight:24}}><Approvals user={user} clients={clients} content={content} setContent={setContent} users={users} /></div>}
-            {active==="punch"&&<div style={{paddingRight:24}}><PunchPage user={user} attendance={attendance} setAttendance={setAttendance} /></div>}
+            {active==="punch"&&<div style={{paddingRight:24}}><PunchPage user={user} users={users} attendance={attendance} setAttendance={setAttendance} /></div>}
             {active==="hr"&&<div style={{paddingRight:24}}><HR user={user} leaves={leaves} setLeaves={setLeaves} attendance={attendance} users={users} /></div>}
             {active==="assessment"&&user.role==="superadmin"&&<div style={{paddingRight:24}}><Assessment attendance={attendance} leaves={leaves} content={content} users={users} /></div>}
             {active==="notes"&&<div style={{paddingRight:24}}><PlannerCalendar user={user} plannerEvents={plannerEvents} setPlannerEvents={setPlannerEvents} /></div>}
