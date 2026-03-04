@@ -2606,17 +2606,20 @@ export default function App() {
     if(user) currentUserRef.current = user;
   },[user]);
 
-  // Re-track presence when user changes (login or refresh restore)
+  // Presence heartbeat: re-track every 10s to keep status alive
   useEffect(()=>{
     if(!user || !dbReady) return;
-    // Small delay to ensure presence channel is subscribed
-    const timer = setTimeout(()=>{
-      const ch = channelsRef.current.find(c=>c.topic==="realtime:online_presence");
+    function trackPresence() {
+      const ch = channelsRef.current.find(c=>c.topic?.includes("flow-presence"));
       if(ch) {
-        ch.track({userId:user.id}).catch(()=>{});
+        ch.track({userId:Number(user.id)}).catch(()=>{});
       }
-    }, 2000);
-    return ()=>clearTimeout(timer);
+    }
+    // Initial track with delay (wait for channel to subscribe)
+    const initTimer = setTimeout(trackPresence, 3000);
+    // Heartbeat every 10 seconds
+    const heartbeat = setInterval(trackPresence, 10000);
+    return ()=>{ clearTimeout(initTimer); clearInterval(heartbeat); };
   },[user, dbReady]);
 
   // ── Connect to Supabase and load all data once on mount ───────────────────
@@ -2743,16 +2746,37 @@ export default function App() {
     });
 
     // Online presence
-    const presenceCh = supabase.channel("online_presence")
+    // Presence: use a unique channel with proper error handling
+    const presenceCh = supabase.channel("flow-presence", {
+      config: { presence: { key: String(currentUserRef.current?.id || lsGet("flow_user",null)?.id || "anon") } }
+    });
+    presenceCh
       .on("presence","sync",()=>{
-        const state = presenceCh.presenceState();
-        const ids = Object.values(state).flatMap(s=>s.map(p=>p.userId)).filter(Boolean);
-        setOnlineIds([...new Set(ids)]);
+        try {
+          const state = presenceCh.presenceState();
+          const ids = [];
+          Object.values(state).forEach(arr=>{
+            if(Array.isArray(arr)) arr.forEach(p=>{ if(p.userId) ids.push(Number(p.userId)); });
+          });
+          setOnlineIds([...new Set(ids)]);
+        } catch(e) { console.warn("Presence sync error:",e); }
+      })
+      .on("presence","join",({newPresences})=>{
+        const newIds = newPresences.map(p=>Number(p.userId)).filter(Boolean);
+        setOnlineIds(prev=>[...new Set([...prev,...newIds])]);
+      })
+      .on("presence","leave",({leftPresences})=>{
+        const leftIds = new Set(leftPresences.map(p=>Number(p.userId)));
+        setOnlineIds(prev=>prev.filter(id=>!leftIds.has(id)));
       })
       .subscribe(async(status)=>{
+        console.log("Presence status:",status);
         if(status==="SUBSCRIBED") {
           const u = currentUserRef.current || lsGet("flow_user",null);
-          if(u) await presenceCh.track({userId:u.id});
+          if(u) {
+            await presenceCh.track({userId:Number(u.id)});
+            console.log("Presence tracked for user:",u.id);
+          }
         }
       });
     channels.push(presenceCh);
@@ -2832,8 +2856,8 @@ export default function App() {
     // Track presence
     if(supabase) {
       try {
-        const ch = channelsRef.current.find(c=>c.topic==="realtime:online_presence");
-        if(ch) ch.track({userId:freshUser.id}).catch(()=>{});
+        const ch = channelsRef.current.find(c=>c.topic?.includes("flow-presence"));
+        if(ch) ch.track({userId:Number(freshUser.id)}).catch(()=>{});
       } catch{}
     }
   }
