@@ -466,7 +466,7 @@ const getStyles = (dark) => `
   .timeline-body{height:580px;overflow-y:auto;}
   .hour-row{display:flex;border-bottom:1px solid var(--cream-dark);min-height:58px;}
   .hour-label{width:52px;flex-shrink:0;padding:5px 8px 5px 12px;font-size:10px;color:var(--ink-muted);font-weight:500;border-right:1px solid var(--cream-dark);line-height:1;}
-  .hour-slot{flex:1;position:relative;cursor:pointer;}
+  .hour-slot{flex:1;position:relative;cursor:pointer;overflow:visible;}
   .hour-slot:hover{background:rgba(196,149,74,0.04);}
   .event-block{position:absolute;left:5px;right:5px;top:2px;border-radius:7px;padding:5px 8px;font-size:11px;font-weight:500;color:white;overflow:hidden;cursor:pointer;box-shadow:0 2px 5px rgba(0,0,0,0.15);z-index:2;}
   .add-hint{position:absolute;inset:0;display:flex;align-items:center;padding-left:10px;opacity:0;transition:opacity 0.15s;font-size:10.5px;color:var(--ink-muted);}
@@ -2209,7 +2209,7 @@ function PlannerCalendar({ user, plannerEvents={}, setPlannerEvents }) {
               <div className="hour-label" style={{opacity:isPast?0.4:1}}>{hour<12?`${hour}am`:hour===12?"12pm":`${hour-12}pm`}</div>
               <div className="hour-slot" style={{position:"relative",opacity:isPast?0.5:1,background:isPast?"var(--cream-dark)":"transparent"}} onClick={()=>{if(isPast)return;if(!blocked.length)openAdd(hour);}}>
                 {isCurrentHour&&<div style={{position:"absolute",top:timeIndicatorTop,left:0,right:0,height:2,background:"#E53935",zIndex:5,pointerEvents:"none"}}><div style={{position:"absolute",left:-4,top:-3,width:8,height:8,borderRadius:"50%",background:"#E53935"}} /></div>}
-                {evHere.map(ev=><div key={ev.id} className="event-block" style={{background:ev.color,height:`${((ev.endHour+(ev.endMin||0)/60)-(ev.startHour+(ev.startMin||0)/60))*58}px`,marginTop:`${((ev.startMin||0)/60)*58}px`,opacity:isPast?0.5:1,position:"relative",zIndex:2}} onClick={e=>{e.stopPropagation();openEdit(ev);}}><div style={{fontWeight:600,lineHeight:1.3}}>{ev.title}</div><div style={{fontSize:9.5,opacity:0.8,marginTop:1}}>{ev.startHour}:{String(ev.startMin||0).padStart(2,"0")}–{ev.endHour}:{String(ev.endMin||0).padStart(2,"0")}</div></div>)}
+                {evHere.map(ev=><div key={ev.id} className="event-block" style={{background:ev.color,height:`${((ev.endHour+(ev.endMin||0)/60)-(ev.startHour+(ev.startMin||0)/60))*58}px`,position:"absolute",top:`${((ev.startMin||0)/60)*58}px`,left:0,right:0,opacity:isPast?0.5:1,zIndex:2}} onClick={e=>{e.stopPropagation();openEdit(ev);}}><div style={{fontWeight:600,lineHeight:1.3}}>{ev.title}</div><div style={{fontSize:9.5,opacity:0.8,marginTop:1}}>{ev.startHour}:{String(ev.startMin||0).padStart(2,"0")}–{ev.endHour}:{String(ev.endMin||0).padStart(2,"0")}</div></div>)}
                 {!blocked.length&&evHere.length===0&&!isPast&&<div className="add-hint">+ Add block</div>}
                 {isPast&&!blocked.length&&evHere.length===0&&<div style={{fontSize:10,color:"var(--ink-muted)",opacity:0.5,padding:"8px 12px",fontStyle:"italic"}}>Past</div>}
               </div>
