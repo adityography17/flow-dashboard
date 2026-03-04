@@ -2160,11 +2160,20 @@ function PlannerCalendar({ user, plannerEvents={}, setPlannerEvents }) {
   const firstDay=new Date(cal.year,cal.month,1).getDay();const daysInM=new Date(cal.year,cal.month+1,0).getDate();
   const ds=day=>`${cal.year}-${String(cal.month+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
   const dayEvents=events.filter(e=>e.date===selDate);
-  function openAdd(h,m=0){setEditEv(null);setForm({title:"",startHour:h,startMin:m,endHour:Math.min(h+1,22),endMin:0,color:PLANNER_COLORS[0]});setShowModal(true);}
+  function openAdd(h,m=0){
+    // Block adding tasks in the past on today
+    if(selDate===todayISO()&&h<new Date().getHours()) return;
+    setEditEv(null);setForm({title:"",startHour:h,startMin:m,endHour:Math.min(h+1,22),endMin:0,color:PLANNER_COLORS[0]});setShowModal(true);
+  }
   function openEdit(ev){setEditEv(ev);setForm({title:ev.title,startHour:ev.startHour,startMin:ev.startMin||0,endHour:ev.endHour,endMin:ev.endMin||0,color:ev.color});setShowModal(true);}
   function saveEv(){if(!form.title.trim())return;if(editEv)setEvents(prev=>prev.map(e=>e.id===editEv.id?{...e,...form,date:selDate}:e));else setEvents(prev=>[...prev,{id:Date.now(),...form,date:selDate}]);setShowModal(false);}
   function delEv(id){setEvents(prev=>prev.filter(e=>e.id!==id));setShowModal(false);}
   const selDisplay=new Date(selDate+"T12:00").toLocaleDateString("en-IN",{weekday:"long",day:"numeric",month:"long"});
+  const [nowTime,setNowTime]=useState(()=>new Date());
+  const isToday=selDate===todayISO();
+  useEffect(()=>{const iv=setInterval(()=>setNowTime(new Date()),30000);return()=>clearInterval(iv);},[]);
+  const currentHour=nowTime.getHours();
+  const currentMin=nowTime.getMinutes();
   return(<div>
     <div className="section-header"><div><h1 className="section-title">My Planner</h1></div><button className="btn btn-primary" onClick={()=>openAdd(9)}>+ Add Task</button></div>
     <div style={{display:"grid",gridTemplateColumns:"210px 1fr",gap:16}}>
@@ -2182,7 +2191,7 @@ function PlannerCalendar({ user, plannerEvents={}, setPlannerEvents }) {
           {dayEvents.length===0?<p className="text-muted text-sm">None.</p>:dayEvents.map(ev=>(
             <div key={ev.id} className="flex items-center gap-8" style={{marginBottom:8,cursor:"pointer"}} onClick={()=>openEdit(ev)}>
               <div style={{width:9,height:9,borderRadius:3,background:ev.color,flexShrink:0}} />
-              <div style={{flex:1}}><div style={{fontSize:12,fontWeight:500,color:"var(--ink)"}}>{ev.title}</div><div style={{fontSize:9.5,color:"var(--ink-muted)"}}>{ev.startHour}:00–{ev.endHour}:00</div></div>
+              <div style={{flex:1}}><div style={{fontSize:12,fontWeight:500,color:"var(--ink)"}}>{ev.title}</div><div style={{fontSize:9.5,color:"var(--ink-muted)"}}>{ev.startHour}:{String(ev.startMin||0).padStart(2,"0")}–{ev.endHour}:{String(ev.endMin||0).padStart(2,"0")}</div></div>
               <button onClick={e=>{e.stopPropagation();delEv(ev.id);}} style={{background:"none",border:"none",cursor:"pointer",color:"var(--danger)",fontSize:11}}>✕</button>
             </div>
           ))}
@@ -2193,11 +2202,16 @@ function PlannerCalendar({ user, plannerEvents={}, setPlannerEvents }) {
         <div className="timeline-body">
           {HOURS.map(hour=>{
             const evHere=dayEvents.filter(e=>e.startHour===hour);const blocked=dayEvents.filter(e=>hour>=e.startHour&&hour<e.endHour);
-            return(<div key={hour} className="hour-row">
-              <div className="hour-label">{hour<12?`${hour}am`:hour===12?"12pm":`${hour-12}pm`}</div>
-              <div className="hour-slot" onClick={()=>!blocked.length&&openAdd(hour)}>
-                {evHere.map(ev=><div key={ev.id} className="event-block" style={{background:ev.color,height:`${(ev.endHour-ev.startHour)*58}px`}} onClick={e=>{e.stopPropagation();openEdit(ev);}}><div style={{fontWeight:600,lineHeight:1.3}}>{ev.title}</div><div style={{fontSize:9.5,opacity:0.8,marginTop:1}}>{ev.startHour}:00–{ev.endHour}:00</div></div>)}
-                {!blocked.length&&evHere.length===0&&<div className="add-hint">+ Add block</div>}
+            const isPast=isToday&&hour<currentHour;
+            const isCurrentHour=isToday&&hour===currentHour;
+            const timeIndicatorTop=isCurrentHour?Math.round((currentMin/60)*58):0;
+            return(<div key={hour} className="hour-row" style={{position:"relative"}}>
+              <div className="hour-label" style={{opacity:isPast?0.4:1}}>{hour<12?`${hour}am`:hour===12?"12pm":`${hour-12}pm`}</div>
+              <div className="hour-slot" style={{position:"relative",opacity:isPast?0.5:1,background:isPast?"var(--cream-dark)":"transparent"}} onClick={()=>{if(isPast)return;if(!blocked.length)openAdd(hour);}}>
+                {isCurrentHour&&<div style={{position:"absolute",top:timeIndicatorTop,left:0,right:0,height:2,background:"#E53935",zIndex:5,pointerEvents:"none"}}><div style={{position:"absolute",left:-4,top:-3,width:8,height:8,borderRadius:"50%",background:"#E53935"}} /></div>}
+                {evHere.map(ev=><div key={ev.id} className="event-block" style={{background:ev.color,height:`${((ev.endHour+(ev.endMin||0)/60)-(ev.startHour+(ev.startMin||0)/60))*58}px`,opacity:isPast?0.5:1}} onClick={e=>{e.stopPropagation();openEdit(ev);}}><div style={{fontWeight:600,lineHeight:1.3}}>{ev.title}</div><div style={{fontSize:9.5,opacity:0.8,marginTop:1}}>{ev.startHour}:{String(ev.startMin||0).padStart(2,"0")}–{ev.endHour}:{String(ev.endMin||0).padStart(2,"0")}</div></div>)}
+                {!blocked.length&&evHere.length===0&&!isPast&&<div className="add-hint">+ Add block</div>}
+                {isPast&&!blocked.length&&evHere.length===0&&<div style={{fontSize:10,color:"var(--ink-muted)",opacity:0.5,padding:"8px 12px",fontStyle:"italic"}}>Past</div>}
               </div>
             </div>);
           })}
@@ -2211,7 +2225,7 @@ function PlannerCalendar({ user, plannerEvents={}, setPlannerEvents }) {
           <label className="form-label">Start Time</label>
           <div className="flex gap-6">
             <select className="form-input form-select" style={{flex:1}} value={form.startHour} onChange={e=>setForm(p=>({...p,startHour:parseInt(e.target.value)}))}>
-              {HOURS.map(h=><option key={h} value={h}>{h<12?`${h} AM`:h===12?"12 PM":`${h-12} PM`}</option>)}
+              {HOURS.filter(h=>selDate!==todayISO()||h>=new Date().getHours()).map(h=><option key={h} value={h}>{h<12?`${h} AM`:h===12?"12 PM":`${h-12} PM`}</option>)}
             </select>
             <select className="form-input form-select" style={{width:72}} value={form.startMin||0} onChange={e=>setForm(p=>({...p,startMin:parseInt(e.target.value)}))}>
               {[0,5,10,15,20,25,30,35,40,45,50,55].map(m=><option key={m} value={m}>{String(m).padStart(2,"0")}</option>)}
