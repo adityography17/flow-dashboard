@@ -2710,7 +2710,7 @@ export default function App() {
   useEffect(()=>{
     if(!user || !dbReady) return;
     function trackPresence() {
-      const ch = channelsRef.current.find(c=>c.topic?.includes("flow-presence"));
+      const ch = channelsRef.current.find(c=>c.topic?.includes("flow-presence-"));
       if(ch) {
         ch.track({userId:Number(user.id)}).then(()=>{
           console.log("Heartbeat tracked user:",user.id);
@@ -2770,7 +2770,7 @@ export default function App() {
 
   // ── Real-time: subscribe to ALL table changes after DB is ready ───────────
   useEffect(()=>{
-    if(!dbReady || !supabase) return;
+    if(!dbReady || !supabase || !user) return;
     const sb = supabase;
     const channels = [];
 
@@ -2852,8 +2852,8 @@ export default function App() {
 
     // Online presence
     // Presence: use a unique channel with proper error handling
-    const presenceCh = supabase.channel("flow-presence", {
-      config: { presence: { key: String(currentUserRef.current?.id || lsGet("flow_user",null)?.id || "anon") } }
+    const presenceCh = supabase.channel("flow-presence-" + String(user.id), {
+      config: { presence: { key: String(user.id) } }
     });
     presenceCh
       .on("presence","sync",()=>{
@@ -2877,24 +2877,15 @@ export default function App() {
       .subscribe(async(status)=>{
         console.log("Presence status:",status);
         if(status==="SUBSCRIBED") {
-          // Try immediately, then retry a few times if user not available yet
-          async function doTrack(retries) {
-            const u = currentUserRef.current || lsGet("flow_user",null);
-            if(u) {
-              await presenceCh.track({userId:Number(u.id)});
-              console.log("Presence tracked for user:",u.id);
-            } else if(retries > 0) {
-              setTimeout(()=>doTrack(retries-1), 1000);
-            }
-          }
-          doTrack(5);
+          await presenceCh.track({userId:Number(user.id)});
+          console.log("Presence tracked for user:",user.id);
         }
       });
     channels.push(presenceCh);
     channelsRef.current = channels;
   
     return ()=>channels.forEach(ch=>{ try{ supabase.removeChannel(ch); }catch{} });
-  },[dbReady]);
+  },[dbReady, user?.id]);
 
   // ── Simple setters: update state + write to Supabase ─────────────────────
   async function setUsers(u) {
@@ -2967,7 +2958,7 @@ export default function App() {
     // Track presence
     if(supabase) {
       try {
-        const ch = channelsRef.current.find(c=>c.topic?.includes("flow-presence"));
+        const ch = channelsRef.current.find(c=>c.topic?.includes("flow-presence-"));
         if(ch) ch.track({userId:Number(freshUser.id)}).catch(()=>{});
       } catch{}
     }
