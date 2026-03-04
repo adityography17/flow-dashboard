@@ -116,25 +116,26 @@ async function dbSubscribe(table, callback) {
 }
 
 // ─── AI helpers ───────────────────────────────────────────────────────────────
-async function callClaude(prompt, maxTokens=1200) {
-  // API key: set VITE_ANTHROPIC_API_KEY in Vercel environment variables
-  const apiKey = (typeof window !== "undefined" && window.__ANTHROPIC_KEY__) || null;
-  const headers = {"Content-Type":"application/json"};
-  if(apiKey) headers["x-api-key"] = apiKey;
-  const res = await fetch("https://api.anthropic.com/v1/messages",{
+// Supports OpenAI (ChatGPT) — set VITE_OPENAI_API_KEY in Vercel env variables
+const AI_API_KEY = typeof import.meta !== "undefined" ? import.meta.env?.VITE_OPENAI_API_KEY : null;
+
+async function callAI(prompt, maxTokens=1200) {
+  const apiKey = AI_API_KEY || (typeof window !== "undefined" && window.__OPENAI_KEY__) || null;
+  if(!apiKey) throw new Error("No API key found. Add VITE_OPENAI_API_KEY in Vercel environment variables.");
+  const res = await fetch("https://api.openai.com/v1/chat/completions",{
     method:"POST",
-    headers,
-    body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:maxTokens,messages:[{role:"user",content:prompt}]})
+    headers:{"Content-Type":"application/json","Authorization":`Bearer ${apiKey}`},
+    body:JSON.stringify({model:"gpt-4o-mini",max_tokens:maxTokens,messages:[{role:"user",content:prompt}]})
   });
   if(!res.ok){
     const err=await res.json().catch(()=>({}));
     throw new Error(err.error?.message||`API error ${res.status}`);
   }
   const d = await res.json();
-  return d.content?.[0]?.text || "";
+  return d.choices?.[0]?.message?.content || "";
 }
 async function generateCaption(desc,clientName,service){
-  try{ return await callClaude(`Premium Instagram caption for ${clientName} (${service}). Media: ${desc}. Elegant tone, 3-5 hashtags, under 150 words. Return ONLY caption.`); }
+  try{ return await callAI(`Premium Instagram caption for ${clientName} (${service}). Media: ${desc}. Elegant tone, 3-5 hashtags, under 150 words. Return ONLY caption.`); }
   catch{ return "Caption generation failed."; }
 }
 async function generateAssessment(emp,attRecs,leaveRecs,contentItems){
@@ -168,7 +169,7 @@ Use bullet points.
 ## Recommendation
 
 Be professional, specific to the data, and constructive. Keep it under 400 words.`;
-  try{ return await callClaude(prompt,1500); }
+  try{ return await callAI(prompt,1500); }
   catch(e){ return "Assessment generation failed. Please check your API configuration."; }
 }
 
@@ -2121,9 +2122,9 @@ function Assessment({ attendance, leaves, content, users }) {
     <div className="section-header">
       <div>
         <h1 className="section-title">AI Employee Assessment</h1>
-        <p className="section-sub" style={{fontSize:11,color:"var(--ink-muted)"}}>Requires Anthropic API key in your Vercel environment as VITE_ANTHROPIC_API_KEY</p>
+        <p className="section-sub" style={{fontSize:11,color:"var(--ink-muted)"}}>Requires OpenAI API key in your Vercel environment as VITE_OPENAI_API_KEY</p>
       </div>
-      <span className="ai-badge" style={{fontSize:10,padding:"4px 10px"}}>✦ Claude</span>
+      <span className="ai-badge" style={{fontSize:10,padding:"4px 10px"}}>✦ ChatGPT</span>
     </div>
     <div style={{display:"grid",gridTemplateColumns:"280px 1fr",gap:16}}>
       <div>
@@ -2449,10 +2450,10 @@ function ChatPage({ user, users, messages, setMessages, onlineIds }) {
   const others  = users.filter(u=>u.id!==user.id);
   const getUser = id=>users.find(u=>u.id===id);
   const threadUser = thread!=="all" ? getUser(thread) : null;
-  const threadName = thread==="all" ? "All Hands" : (threadUser?.displayName||threadUser?.name||"Unknown");
+  const threadName = thread==="all" ? "All Hands" : (threadUser?.name||threadUser?.displayName||"Unknown");
 
   // Filtered contacts for search
-  const filteredOthers = others.filter(u=>(u.displayName||u.name).toLowerCase().includes(search.toLowerCase()));
+  const filteredOthers = others.filter(u=>(u.name||u.displayName||u.username).toLowerCase().includes(search.toLowerCase()));
 
   // Group messages by date
   function groupByDate(msgs){
