@@ -2431,13 +2431,37 @@ function ChatPage({ user, users, messages, setMessages, onlineIds }) {
       }
       return m;
     }));
-    // Persist read receipts to Supabase
+    // Persist read receipts to Supabase so sender sees blue ticks
     if(toUpdate.length>0 && supabase) {
+      console.log("Marking",toUpdate.length,"messages as read");
       toUpdate.forEach(u=>{
-        supabase.from("flow_messages").update({readBy:u.readBy}).eq("id",u.id).then(()=>{}).catch(()=>{});
+        supabase.from("flow_messages").update({readBy:u.readBy}).eq("id",u.id)
+          .then(res=>{if(res.error) console.warn("Read receipt error:",res.error);})
+          .catch(e=>console.warn("Read receipt failed:",e));
       });
     }
   },[thread]);
+
+  // Also mark new incoming messages as read if thread is already open
+  useEffect(()=>{
+    if(!thread) return;
+    const unread = visibleMsgs.filter(m=>{
+      if(String(m.fromId)===String(user.id)) return false;
+      return !(m.readBy||[]).some(r=>typeof r==="object"?r.userId===user.id:r===user.id);
+    });
+    if(unread.length===0) return;
+    const now = nowStr();
+    setMessages(prev=>prev.map(m=>{
+      if(!unread.find(u=>u.id===m.id)) return m;
+      return {...m, readBy:[...(m.readBy||[]),{userId:user.id,at:now}]};
+    }));
+    if(supabase) {
+      unread.forEach(m=>{
+        const newRb = [...(m.readBy||[]),{userId:user.id,at:now}];
+        supabase.from("flow_messages").update({readBy:newRb}).eq("id",m.id).then(()=>{}).catch(()=>{});
+      });
+    }
+  },[visibleMsgs.length, thread]);
 
   function send(){
     if(!input.trim()) return;
