@@ -189,21 +189,21 @@ const getStyles = (dark) => `
   @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400;1,600&family=DM+Sans:wght@300;400;500;600&display=swap');
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
   :root{
-    --cream:${dark?"#1A1A2E":"#EEF2F7"};
-    --cream-dark:${dark?"#16213E":"#E2E8F0"};
+    --cream:${dark?"#0F172A":"#EEF2F7"};
+    --cream-dark:${dark?"rgba(255,255,255,0.06)":"#E2E8F0"};
     --ink:${dark?"#E8E0D0":"#1E293B"};
-    --ink-light:${dark?"#B8B0A0":"#475569"};
-    --ink-muted:${dark?"#777":"#94A3B8"};
-    --accent:#E87620;--accent-light:#F59E4B;--accent-pale:${dark?"rgba(232,118,32,0.15)":"#FFF3E8"};
+    --ink-light:${dark?"#CBD5E1":"#475569"};
+    --ink-muted:${dark?"#A0AEC0":"#94A3B8"};
+    --accent:#E87620;--accent-light:#F59E4B;--accent-pale:${dark?"rgba(232,118,32,0.2)":"#FFF3E8"};
     --white:${dark?"#0F3460":"#FFF"};
-    --border:${dark?"#2A3A5A":"rgba(255,255,255,0.5)"};
-    --surface:${dark?"#1E2D4A":"rgba(255,255,255,0.65)"};
-    --surface2:${dark?"#243354":"rgba(255,255,255,0.4)"};
+    --border:${dark?"rgba(255,255,255,0.12)":"rgba(255,255,255,0.5)"};
+    --surface:${dark?"rgba(30,45,74,0.85)":"rgba(255,255,255,0.65)"};
+    --surface2:${dark?"rgba(36,51,84,0.7)":"rgba(255,255,255,0.4)"};
     --success:#16A34A;--warning:#D97706;--danger:#DC2626;--info:#2563EB;
     --sidebar-w:248px;--header-h:62px;
     --chat-w:320px;
-    --glass:${dark?"rgba(30,45,74,0.7)":"rgba(255,255,255,0.55)"};
-    --glass-border:${dark?"rgba(255,255,255,0.08)":"rgba(255,255,255,0.7)"};
+    --glass:${dark?"rgba(15,23,42,0.8)":"rgba(255,255,255,0.55)"};
+    --glass-border:${dark?"rgba(255,255,255,0.12)":"rgba(255,255,255,0.7)"};
     --glass-shadow:0 8px 32px rgba(0,0,0,0.08);
   }
   body{font-family:'DM Sans',sans-serif;background:${dark?"#0F172A":"linear-gradient(135deg, #FFECD2, #FCB69F, #C9E4FF, #FFD6A0, #E0C3FC, #F0F4FF, #FEE2C8, #D4F1E8)"};background-size:600% 600%;background-attachment:fixed;animation:gradientShift 15s ease infinite;color:var(--ink);font-size:14.5px;line-height:1.55;}
