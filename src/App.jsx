@@ -1323,6 +1323,35 @@ function Dashboard({ user, users=[], clients, content, setContent, attendance, d
           {myContent.length===0&&<p className="text-muted text-sm">No content yet.</p>}
         </div>
       </div>
+    {/* Active Clients List — visible to all */}
+    <div className="card" style={{marginTop:16}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+        <h3 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:16,fontWeight:600,color:"var(--ink)"}}>Active Clients</h3>
+        <span style={{fontSize:11,color:"var(--ink-muted)",background:"var(--accent-pale)",padding:"3px 10px",borderRadius:10,fontWeight:600}}>{clients.filter(c=>c.status==="active").length} active</span>
+      </div>
+      {clients.filter(c=>c.status==="active").length===0&&<p className="text-muted text-sm">No active clients yet.</p>}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:10}}>
+        {clients.filter(c=>c.status==="active").map(cl=>{
+          const clContent=content.filter(c=>c.clientId===cl.id);
+          const posted=clContent.filter(c=>c.status==="posted").length;
+          const pending=clContent.filter(c=>["pending_admin","pending_superadmin","draft"].includes(c.status)).length;
+          return(
+            <div key={cl.id} style={{padding:"12px 14px",borderRadius:12,border:"1px solid var(--border)",background:"var(--surface2)",display:"flex",alignItems:"center",gap:12}}>
+              <div style={{width:38,height:38,borderRadius:10,background:"var(--accent)",display:"flex",alignItems:"center",justifyContent:"center",color:"white",fontSize:14,fontWeight:700,flexShrink:0}}>{(cl.name||"?")[0].toUpperCase()}</div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13,fontWeight:600,color:"var(--ink)",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{cl.name}</div>
+                <div style={{fontSize:10,color:"var(--ink-muted)",marginTop:2}}>{cl.service||cl.category||"Client"}</div>
+                <div style={{display:"flex",gap:8,marginTop:4}}>
+                  <span style={{fontSize:9,color:"var(--success)",fontWeight:600}}>{posted} posted</span>
+                  {pending>0&&<span style={{fontSize:9,color:"var(--warning)",fontWeight:600}}>{pending} pending</span>}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+
     {/* Superadmin: Today's Team Selfies */}
     {user.role==="superadmin"&&(
       <div id="sa-selfie-panel" className="card" style={{marginTop:16}}>
