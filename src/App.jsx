@@ -214,7 +214,7 @@ const getStyles = (dark) => `
   .sidebar{width:var(--sidebar-w);background:var(--glass);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border-right:1px solid var(--glass-border);display:flex;flex-direction:column;position:fixed;top:0;left:0;bottom:0;z-index:100;overflow-y:auto;}
   .sidebar-logo{padding:20px 18px 18px;border-bottom:1px solid rgba(0,0,0,0.08);}
   .logo-wordmark{font-family:'Cormorant Garamond',serif;font-size:22px;font-weight:700;color:#E87620;letter-spacing:-0.5px;line-height:1;}
-  .logo-wordmark em{font-style:italic;color:#fff;}
+  .logo-wordmark em{font-style:italic;color:#94A3B8;}
   .logo-byline{font-size:9px;letter-spacing:2.5px;color:#94A3B8;text-transform:uppercase;margin-top:4px;}
   .sidebar-section{padding:13px 0 5px;}
   .sidebar-section-label{font-size:9px;letter-spacing:2px;text-transform:uppercase;color:#94A3B8;padding:0 18px;margin-bottom:4px;}
