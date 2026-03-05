@@ -206,7 +206,7 @@ const getStyles = (dark) => `
     --glass-border:${dark?"rgba(255,255,255,0.12)":"rgba(255,255,255,0.7)"};
     --glass-shadow:0 8px 32px rgba(0,0,0,0.08);
   }
-  body{font-family:'DM Sans',sans-serif;background:${dark?"#0F172A":"linear-gradient(135deg, #FFF5EB 0%, #FFE8D6 30%, #FFDCC8 60%, #FFF0E3 100%)"};background-attachment:fixed;color:var(--ink);font-size:14.5px;line-height:1.55;}
+  body{font-family:'DM Sans',sans-serif;background:${dark?"#0F172A":"#FFF2E8"};color:var(--ink);font-size:14.5px;line-height:1.55;}
   .serif{font-family:'Cormorant Garamond',serif;}
   ::-webkit-scrollbar{width:4px;}::-webkit-scrollbar-track{background:var(--cream-dark);}::-webkit-scrollbar-thumb{background:rgba(232,118,32,0.3);border-radius:2px;}
 
@@ -291,7 +291,7 @@ const getStyles = (dark) => `
   .modal-lg{max-width:720px;}
   .modal-xl{max-width:920px;}
 
-  .login-page{min-height:100vh;background:linear-gradient(135deg, #FFF5EB 0%, #FFE8D6 30%, #FFDCC8 60%, #FFF0E3 100%);display:flex;align-items:center;justify-content:center;padding:20px;position:relative;overflow:hidden;}
+  .login-page{min-height:100vh;background:#FFF2E8;display:flex;align-items:center;justify-content:center;padding:20px;position:relative;overflow:hidden;}
   .login-card{background:${dark?"rgba(12,10,22,0.82)":"rgba(255,255,255,0.88)"};border-radius:24px;padding:44px 38px;width:100%;max-width:420px;position:relative;z-index:10;backdrop-filter:blur(28px);-webkit-backdrop-filter:blur(28px);border:1px solid ${dark?"rgba(255,255,255,0.08)":"rgba(255,255,255,0.6)"};}
   .login-brand{font-family:'Cormorant Garamond',serif;font-size:32px;font-weight:700;color:${dark?"#E8E0D0":"#141414"};letter-spacing:-1px;text-align:center;}
   .login-brand em{font-style:italic;color:#E87620;}
