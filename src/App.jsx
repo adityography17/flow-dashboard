@@ -211,7 +211,19 @@ const getStyles = (dark) => `
   ::-webkit-scrollbar{width:4px;}::-webkit-scrollbar-track{background:var(--cream-dark);}::-webkit-scrollbar-thumb{background:rgba(232,118,32,0.3);border-radius:2px;}
 
   .app{display:flex;min-height:100vh;}
-  .sidebar{width:var(--sidebar-w);background:var(--glass);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border-right:1px solid var(--glass-border);display:flex;flex-direction:column;position:fixed;top:0;left:0;bottom:0;z-index:100;overflow-y:auto;}
+  .sidebar{width:var(--sidebar-w);background:var(--glass);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border-right:1px solid var(--glass-border);display:flex;flex-direction:column;position:fixed;top:0;left:0;bottom:0;z-index:100;overflow-y:auto;transition:transform 0.28s cubic-bezier(0.4,0,0.2,1);}
+  .sidebar.collapsed{transform:translateX(-100%);}
+  .sidebar-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.3);z-index:99;display:none;}
+  .sidebar-overlay.show{display:block;}
+  .hamburger{display:none;background:none;border:none;cursor:pointer;padding:6px;font-size:20px;color:var(--ink);line-height:1;}
+  @media(max-width:768px){
+    .sidebar{transform:translateX(-100%);}
+    .sidebar.open-mobile{transform:translateX(0);}
+    .sidebar-overlay.show-mobile{display:block;}
+    .hamburger{display:flex;align-items:center;justify-content:center;}
+    .main{margin-left:0 !important;}
+    .content{padding:12px !important;}
+  }
   .sidebar-logo{padding:20px 18px 18px;border-bottom:1px solid rgba(0,0,0,0.08);}
   .logo-wordmark{font-family:'Cormorant Garamond',serif;font-size:22px;font-weight:700;color:#E87620;letter-spacing:-0.5px;line-height:1;}
   .logo-wordmark em{font-style:italic;color:#94A3B8;}
@@ -670,7 +682,7 @@ function LoginPage({ onLogin, dark, phase, users }) {
 }
 
 // ─── SIDEBAR ──────────────────────────────────────────────────────────────────
-function Sidebar({ user, active, setActive, pendingCount, chatUnread }) {
+function Sidebar({ user, active, setActive, pendingCount, chatUnread, collapsed, onToggle, onNavigate }) {
   const isSA=user.role==="superadmin", isAdmin=user.role==="admin"||isSA;
   const sections=[
     {label:"Main",items:[{key:"dashboard",icon:"◈",label:"Dashboard"},{key:"punch",icon:"⏱",label:"Attendance"},{key:"notes",icon:"✦",label:"My Planner"},{key:"chat",icon:"💬",label:"Team Chat",badge:chatUnread}]},
@@ -679,16 +691,19 @@ function Sidebar({ user, active, setActive, pendingCount, chatUnread }) {
     {label:"Account",items:[{key:"settings",icon:"⚙",label:"Settings"}]}
   ];
   return (
-    <div className="sidebar">
-      <div className="sidebar-logo">
-        <div className="logo-wordmark">Flow <em>by</em> Anecdote</div>
-        <div className="logo-byline">Agency OS</div>
+    <div className={`sidebar ${collapsed?"collapsed":""}`} id="flow-sidebar">
+      <div className="sidebar-logo" style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <div>
+          <div className="logo-wordmark">Flow <em>by</em> Anecdote</div>
+          <div className="logo-byline">Agency OS</div>
+        </div>
+        <button onClick={onToggle} style={{background:"none",border:"none",cursor:"pointer",fontSize:18,color:"var(--ink-muted)",padding:4}} title="Close sidebar">✕</button>
       </div>
       {sections.map(s=>(
         <div className="sidebar-section" key={s.label}>
           <div className="sidebar-section-label">{s.label}</div>
           {s.items.map(item=>(
-            <div key={item.key} className={`nav-item ${active===item.key?"active":""}`} onClick={()=>setActive(item.key)}>
+            <div key={item.key} className={`nav-item ${active===item.key?"active":""}`} onClick={()=>{setActive(item.key);if(onNavigate)onNavigate();}}>
               <span className="nav-icon">{item.icon}</span>{item.label}
               {item.badge>0&&<span className="nav-badge">{item.badge}</span>}
             </div>
@@ -2983,6 +2998,12 @@ export default function App() {
   const [onlineIds,setOnlineIds]   = useState([]);
   const [phase,setPhase]           = useState(0);
   const [chatNotif,setChatNotif]   = useState(null);
+  const [sidebarOpen,setSidebarOpen] = useState(()=>window.innerWidth>768);
+  const [isMobile,setIsMobile] = useState(()=>window.innerWidth<=768);
+  useEffect(()=>{
+    function onResize(){const m=window.innerWidth<=768;setIsMobile(m);if(m)setSidebarOpen(false);else setSidebarOpen(true);}
+    window.addEventListener('resize',onResize);return()=>window.removeEventListener('resize',onResize);
+  },[]);
   const [dbReady,setDbReady]       = useState(false);
   const currentUserRef             = useRef(null);
   const channelsRef                = useRef([]);
@@ -3274,9 +3295,12 @@ export default function App() {
       )}
 
       <div className="app" style={{paddingTop:3,position:"relative",zIndex:1}}>
-        <Sidebar user={user} active={active} setActive={setActive} pendingCount={pendingCount} chatUnread={0} />
-        <div className="main">
+        {/* Sidebar overlay for mobile */}
+        <div className={`sidebar-overlay ${sidebarOpen&&isMobile?"show":""}`} onClick={()=>setSidebarOpen(false)} />
+        <Sidebar user={user} active={active} setActive={setActive} pendingCount={pendingCount} chatUnread={0} collapsed={!sidebarOpen} onToggle={()=>setSidebarOpen(p=>!p)} onNavigate={()=>{if(isMobile)setSidebarOpen(false);}} />
+        <div className="main" style={{marginLeft:sidebarOpen&&!isMobile?"var(--sidebar-w)":"0",transition:"margin-left 0.28s cubic-bezier(0.4,0,0.2,1)"}}>
           <div className="topbar">
+            <button className="hamburger" onClick={()=>setSidebarOpen(true)} style={{display:sidebarOpen&&!isMobile?"none":"flex",background:"none",border:"none",cursor:"pointer",padding:"6px",fontSize:"20px",color:"var(--ink)",marginRight:8}}>☰</button>
             <span className="topbar-title serif" style={{fontStyle:active==="dashboard"?"italic":"normal"}}>{titles[active]||active}</span>
             <div className="topbar-right">
               <button className="icon-btn" title="Toggle Theme" onClick={()=>handleSetDark(p=>!p)}>{dark?"☀":"🌙"}</button>
