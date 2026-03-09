@@ -3300,9 +3300,9 @@ export default function App() {
         {/* Sidebar overlay for mobile */}
         <div className={`sidebar-overlay ${sidebarOpen&&isMobile?"show":""}`} onClick={()=>setSidebarOpen(false)} />
         <Sidebar user={user} active={active} setActive={setActive} pendingCount={pendingCount} chatUnread={0} collapsed={!sidebarOpen} onToggle={()=>setSidebarOpen(p=>!p)} onNavigate={()=>{if(isMobile)setSidebarOpen(false);}} />
-        <div className="main" style={{marginLeft:sidebarOpen&&!isMobile?"var(--sidebar-w)":"0",transition:"margin-left 0.28s cubic-bezier(0.4,0,0.2,1)"}}>
+        <div className="main" style={{marginLeft:sidebarOpen&&!isMobile?"var(--sidebar-w)":"0",transition:"margin-left 0.28s ease"}}>
           <div className="topbar">
-            <button className="hamburger" onClick={()=>setSidebarOpen(true)} style={{display:sidebarOpen&&!isMobile?"none":"flex",background:"none",border:"none",cursor:"pointer",padding:"6px",fontSize:"20px",color:"var(--ink)",marginRight:8}}>☰</button>
+            <button className="hamburger" onClick={()=>setSidebarOpen(true)} style={{display:sidebarOpen?"none":"flex",background:"none",border:"none",cursor:"pointer",padding:"6px",fontSize:"20px",color:"var(--ink)",marginRight:8}}>☰</button>
             <span className="topbar-title serif" style={{fontStyle:active==="dashboard"?"italic":"normal"}}>{titles[active]||active}</span>
             <div className="topbar-right">
               <button className="icon-btn" title="Toggle Theme" onClick={()=>handleSetDark(p=>!p)}>{dark?"☀":"🌙"}</button>
