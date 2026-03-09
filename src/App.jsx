@@ -215,14 +215,16 @@ const getStyles = (dark) => `
   .sidebar.collapsed{transform:translateX(-100%);}
   .sidebar-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.3);z-index:99;display:none;}
   .sidebar-overlay.show{display:block;}
-  .hamburger{display:none;background:none;border:none;cursor:pointer;padding:6px;font-size:20px;color:var(--ink);line-height:1;}
   @media(max-width:768px){
-    .sidebar{transform:translateX(-100%);}
-    .sidebar.open-mobile{transform:translateX(0);}
-    .sidebar-overlay.show-mobile{display:block;}
-    .hamburger{display:flex;align-items:center;justify-content:center;}
     .main{margin-left:0 !important;}
     .content{padding:12px !important;}
+    .sidebar{position:fixed;z-index:200;}
+    .sidebar-overlay.show{display:block;z-index:199;}
+    .topbar{padding:0 12px;}
+    .section-header{flex-direction:column;gap:10px;}
+    .grid-2{grid-template-columns:1fr !important;}
+    .cc-wrap{grid-template-columns:1fr !important;}
+    .settings-grid{grid-template-columns:1fr !important;}
   }
   .sidebar-logo{padding:20px 18px 18px;border-bottom:1px solid rgba(0,0,0,0.08);}
   .logo-wordmark{font-family:'Cormorant Garamond',serif;font-size:22px;font-weight:700;color:#E87620;letter-spacing:-0.5px;line-height:1;}
