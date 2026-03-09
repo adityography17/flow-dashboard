@@ -1500,6 +1500,7 @@ function ContentCalendar({ user, clients, calendar, setCalendar, users }) {
   const [selFestival, setSelFestival] = useState(null);
   const [form, setForm] = useState({ clientId:"", posts:[""] });
   const [filterClient, setFilterClient] = useState("all"); // E1: client filter
+  const [expandedPlan, setExpandedPlan] = useState(null); // expanded plan id
 
   const { year, month } = calView;
   const firstDow = new Date(year, month, 1).getDay();
@@ -1740,13 +1741,16 @@ function ContentCalendar({ user, clients, calendar, setCalendar, users }) {
                 .map(c => {
                   const cl = clients.find(x => x.id===c.clientId);
                   return (
-                    <div key={c.id} style={{marginBottom:10,paddingBottom:10,borderBottom:"1px solid var(--cream-dark)"}}>
+                    <div key={c.id} style={{marginBottom:10,paddingBottom:10,borderBottom:"1px solid var(--cream-dark)",cursor:"pointer",borderRadius:8,padding:10,transition:"background 0.15s",background:expandedPlan===c.id?"var(--accent-pale)":"transparent"}} onClick={()=>setExpandedPlan(expandedPlan===c.id?null:c.id)}>
                       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                        <div style={{fontWeight:600,fontSize:12,color:"var(--ink)"}}>{cl?.name}</div>
+                        <div style={{display:"flex",alignItems:"center",gap:8}}>
+                          <span style={{fontSize:10,color:"var(--ink-muted)",transition:"transform 0.2s",display:"inline-block",transform:expandedPlan===c.id?"rotate(90deg)":"rotate(0deg)"}}>▶</span>
+                          <div style={{fontWeight:600,fontSize:12,color:"var(--ink)"}}>{cl?.name}</div>
+                        </div>
                         <div style={{display:"flex",alignItems:"center",gap:6}}>
                           {getStatusBadge(c.status)}
                           {(user.role==="admin"||user.role==="superadmin")&&c.status==="pending"&&(
-                            <div style={{display:"flex",gap:4}}>
+                            <div style={{display:"flex",gap:4}} onClick={e=>e.stopPropagation()}>
                               <button className="btn btn-success btn-sm" style={{padding:"2px 7px"}} onClick={()=>updateStatus(c.id,"approved")}>✓</button>
                               <button className="btn btn-danger btn-sm" style={{padding:"2px 7px"}} onClick={()=>updateStatus(c.id,"rejected")}>✕</button>
                             </div>
@@ -1754,6 +1758,28 @@ function ContentCalendar({ user, clients, calendar, setCalendar, users }) {
                         </div>
                       </div>
                       <div style={{fontSize:10,color:"var(--ink-muted)",marginTop:3}}>{c.posts.length} posts · By {getUserById(c.createdBy)?.name}</div>
+                      {expandedPlan===c.id&&(
+                        <div style={{marginTop:10,padding:10,background:"var(--surface)",borderRadius:8,border:"1px solid var(--border)"}}>
+                          <div style={{fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:"var(--ink-muted)",marginBottom:8}}>Plan Details</div>
+                          <div style={{display:"flex",gap:16,marginBottom:10,flexWrap:"wrap"}}>
+                            <div><span style={{fontSize:10,color:"var(--ink-muted)"}}>Client:</span><div style={{fontSize:12,fontWeight:600,color:"var(--ink)"}}>{cl?.name}</div></div>
+                            <div><span style={{fontSize:10,color:"var(--ink-muted)"}}>Month:</span><div style={{fontSize:12,fontWeight:600,color:"var(--ink)"}}>{c.month}</div></div>
+                            <div><span style={{fontSize:10,color:"var(--ink-muted)"}}>Status:</span><div style={{marginTop:2}}>{getStatusBadge(c.status)}</div></div>
+                            <div><span style={{fontSize:10,color:"var(--ink-muted)"}}>Created By:</span><div style={{fontSize:12,fontWeight:600,color:"var(--ink)"}}>{getUserById(c.createdBy)?.name||"Unknown"}</div></div>
+                            {c.approvedBy&&<div><span style={{fontSize:10,color:"var(--ink-muted)"}}>Approved By:</span><div style={{fontSize:12,fontWeight:600,color:"var(--ink)"}}>{getUserById(c.approvedBy)?.name||"—"}</div></div>}
+                          </div>
+                          <div style={{fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:"var(--ink-muted)",marginBottom:6}}>Scheduled Posts ({c.posts.length})</div>
+                          {c.posts.map((p,i)=>(
+                            <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:i<c.posts.length-1?"1px solid var(--cream-dark)":"none"}}>
+                              <span style={{width:20,height:20,borderRadius:"50%",background:"var(--accent)",color:"white",display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:700,flexShrink:0}}>{i+1}</span>
+                              <div style={{flex:1}}>
+                                <div style={{fontSize:12,color:"var(--ink)"}}>{p}</div>
+                                {c.dates&&c.dates[i]&&<div style={{fontSize:10,color:"var(--ink-muted)"}}>📅 {c.dates[i]}</div>}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -2335,6 +2361,8 @@ function PlannerCalendar({ user, plannerEvents={}, setPlannerEvents }) {
     setPlannerEvents(p=>({...p,[user.id]:next}));
   }
   const [selDate,setSelDate]=useState(todayISO());
+  const [todos,setTodos]=useState(()=>{try{return JSON.parse(localStorage.getItem("flow_todos_"+user.id))||[];}catch{return[];}});
+  const [newTodo,setNewTodo]=useState("");
   const [cal,setCal]=useState(()=>{const d=new Date();return{year:d.getFullYear(),month:d.getMonth()};});
   const [showModal,setShowModal]=useState(false);const [editEv,setEditEv]=useState(null);
   const [form,setForm]=useState({title:"",startHour:9,startMin:0,endHour:10,endMin:0,color:PLANNER_COLORS[0]});
@@ -2351,6 +2379,10 @@ function PlannerCalendar({ user, plannerEvents={}, setPlannerEvents }) {
   function delEv(id){setEvents(prev=>prev.filter(e=>e.id!==id));setShowModal(false);}
   const selDisplay=new Date(selDate+"T12:00").toLocaleDateString("en-IN",{weekday:"long",day:"numeric",month:"long"});
   const [nowTime,setNowTime]=useState(()=>new Date());
+  useEffect(()=>{try{localStorage.setItem("flow_todos_"+user.id,JSON.stringify(todos));}catch{}},[todos]);
+  function addTodo(){if(!newTodo.trim())return;setTodos(p=>[...p,{id:Date.now(),text:newTodo.trim(),done:false,createdAt:todayISO()}]);setNewTodo("");}
+  function toggleTodo(id){setTodos(p=>p.map(t=>t.id===id?{...t,done:!t.done}:t));}
+  function deleteTodo(id){setTodos(p=>p.filter(t=>t.id!==id));}
   const isToday=selDate===todayISO();
   useEffect(()=>{const iv=setInterval(()=>setNowTime(new Date()),30000);return()=>clearInterval(iv);},[]);
   const currentHour=nowTime.getHours();
@@ -2376,6 +2408,33 @@ function PlannerCalendar({ user, plannerEvents={}, setPlannerEvents }) {
               <button onClick={e=>{e.stopPropagation();delEv(ev.id);}} style={{background:"none",border:"none",cursor:"pointer",color:"var(--danger)",fontSize:11}}>✕</button>
             </div>
           ))}
+        </div>
+        <div className="mini-cal" style={{marginTop:11}}>
+          <p style={{fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:"var(--ink-muted)",marginBottom:9}}>To-Do List</p>
+          <div style={{display:"flex",gap:6,marginBottom:10}}>
+            <input value={newTodo} onChange={e=>setNewTodo(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addTodo()} placeholder="Add a task..." style={{flex:1,padding:"6px 10px",borderRadius:8,border:"1px solid var(--border)",background:"var(--surface)",fontSize:12,color:"var(--ink)"}} />
+            <button onClick={addTodo} style={{padding:"6px 10px",borderRadius:8,background:"var(--accent)",color:"white",border:"none",cursor:"pointer",fontSize:11,fontWeight:700}}>+</button>
+          </div>
+          {todos.filter(t=>!t.done).length===0&&todos.filter(t=>t.done).length===0&&<p className="text-muted text-sm">No to-dos yet.</p>}
+          {todos.filter(t=>!t.done).map(t=>(
+            <div key={t.id} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6,padding:"5px 0"}}>
+              <input type="checkbox" checked={false} onChange={()=>toggleTodo(t.id)} style={{accentColor:"var(--accent)",cursor:"pointer",width:15,height:15,flexShrink:0}} />
+              <span style={{flex:1,fontSize:12,color:"var(--ink)"}}>{t.text}</span>
+              <button onClick={()=>deleteTodo(t.id)} style={{background:"none",border:"none",cursor:"pointer",color:"var(--danger)",fontSize:10,opacity:0.6}}>✕</button>
+            </div>
+          ))}
+          {todos.filter(t=>t.done).length>0&&(
+            <div style={{marginTop:8,borderTop:"1px solid var(--border)",paddingTop:8}}>
+              <p style={{fontSize:9,fontWeight:600,letterSpacing:1,textTransform:"uppercase",color:"var(--ink-muted)",marginBottom:6}}>Completed</p>
+              {todos.filter(t=>t.done).map(t=>(
+                <div key={t.id} style={{display:"flex",alignItems:"center",gap:8,marginBottom:5,padding:"4px 0"}}>
+                  <input type="checkbox" checked={true} onChange={()=>toggleTodo(t.id)} style={{accentColor:"var(--accent)",cursor:"pointer",width:15,height:15,flexShrink:0}} />
+                  <span style={{flex:1,fontSize:12,color:"var(--ink-muted)",textDecoration:"line-through"}}>{t.text}</span>
+                  <button onClick={()=>deleteTodo(t.id)} style={{background:"none",border:"none",cursor:"pointer",color:"var(--danger)",fontSize:10,opacity:0.6}}>✕</button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
       <div className="timeline-wrap">
