@@ -1211,7 +1211,7 @@ function TodaysTasks({ user, content, setContent, clients }) {
   );
 }
 
-function Dashboard({ user, users=[], clients, content, setContent, attendance, dark, plannerEvents={}, calendar=[] }) {
+function Dashboard({ user, users=[], clients, content, setContent, attendance, dark, plannerEvents={}, calendar=[], tickets=[], setActive }) {
   const myContent=user.role==="executive"?content.filter(c=>c.execId===user.id):content;
   const pending=content.filter(c=>(user.role==="admin"&&c.status==="pending_admin")||(user.role==="superadmin"&&(c.status==="pending_superadmin"||c.status==="pending_admin")));
   const todayAtt=attendance.filter(a=>a.date===todayISO());
@@ -1263,6 +1263,33 @@ function Dashboard({ user, users=[], clients, content, setContent, attendance, d
           {myContent.length===0&&<p className="text-muted text-sm">No content yet.</p>}
         </div>
       </div>
+    {/* My Active Tickets */}
+    {(()=>{
+      const myTix=tickets.filter(t=>(String(t.createdBy)===String(user.id)||String(t.assigneeId)===String(user.id))&&(t.status==="open"||t.status==="in_progress"));
+      if(myTix.length===0) return null;
+      const priorityColors={low:"#16A34A",medium:"#D97706",high:"#EA580C",urgent:"#DC2626"};
+      const statusColors={open:"#2563EB",in_progress:"#D97706"};
+      return(
+        <div className="card" style={{marginTop:16,cursor:"pointer"}} onClick={()=>setActive&&setActive("tickets")}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+            <h3 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:16,fontWeight:600,color:"var(--ink)"}}>My Active Tickets</h3>
+            <span style={{fontSize:11,color:"var(--accent)",fontWeight:600}}>{myTix.length} open →</span>
+          </div>
+          {myTix.slice(0,4).map(t=>(
+            <div key={t.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid var(--cream-dark)"}}>
+              <div style={{width:4,height:28,borderRadius:2,background:priorityColors[t.priority]||"var(--border)",flexShrink:0}} />
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:12,fontWeight:600,color:"var(--ink)",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{t.title}</div>
+                <div style={{fontSize:10,color:"var(--ink-muted)"}}>{t.assigneeId&&String(t.assigneeId)===String(user.id)?"Assigned to you":"Created by you"}</div>
+              </div>
+              <span style={{fontSize:9,padding:"2px 8px",borderRadius:10,background:(statusColors[t.status]||"#888")+"20",color:statusColors[t.status]||"#888",fontWeight:700,textTransform:"uppercase",flexShrink:0}}>{t.status?.replace("_"," ")}</span>
+            </div>
+          ))}
+          {myTix.length>4&&<div style={{fontSize:11,color:"var(--ink-muted)",marginTop:8,textAlign:"center"}}>+{myTix.length-4} more tickets</div>}
+        </div>
+      );
+    })()}
+
     {/* Active Clients List — visible to all */}
     <div className="card" style={{marginTop:16}}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
@@ -1291,6 +1318,31 @@ function Dashboard({ user, users=[], clients, content, setContent, attendance, d
         })}
       </div>
     </div>
+
+    {/* My Tickets — assigned to me or created by me */}
+    {tickets.filter(t=>String(t.assigneeId)===String(user.id)&&t.status!=="closed"&&t.status!=="resolved").length>0&&(
+      <div className="card" style={{marginTop:16}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+          <h3 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:16,fontWeight:600,color:"var(--ink)"}}>My Tickets</h3>
+          <span style={{fontSize:11,color:"var(--accent)",cursor:"pointer",fontWeight:600}} onClick={()=>setActive&&setActive("tickets")}>View All →</span>
+        </div>
+        {tickets.filter(t=>String(t.assigneeId)===String(user.id)&&t.status!=="closed"&&t.status!=="resolved").slice(0,5).map(t=>{
+          const priorityColors={low:"#16A34A",medium:"#D97706",high:"#EA580C",urgent:"#DC2626"};
+          const statusColors={open:"#2563EB",in_progress:"#D97706",resolved:"#16A34A",closed:"#94A3B8"};
+          const creator=users.find(u=>String(u.id)===String(t.createdBy));
+          return(
+            <div key={t.id} onClick={()=>setActive&&setActive("tickets")} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 12px",borderRadius:8,marginBottom:6,cursor:"pointer",borderLeft:"3px solid "+(priorityColors[t.priority]||"var(--border)"),background:"var(--surface2)"}}>
+              <div style={{flex:1}}>
+                <div style={{fontSize:13,fontWeight:600,color:"var(--ink)"}}>{t.title}</div>
+                <div style={{fontSize:10,color:"var(--ink-muted)",marginTop:2}}>From {creator?.name||"Unknown"} · {new Date(t.createdAt).toLocaleDateString("en-IN",{day:"numeric",month:"short"})}</div>
+              </div>
+              <span style={{fontSize:9,padding:"2px 8px",borderRadius:10,background:(statusColors[t.status]||"#888")+"20",color:statusColors[t.status]||"#888",fontWeight:700,textTransform:"uppercase"}}>{t.status?.replace("_"," ")}</span>
+              <span style={{fontSize:9,padding:"2px 8px",borderRadius:10,background:(priorityColors[t.priority]||"#888")+"15",color:priorityColors[t.priority]||"#888",fontWeight:700,textTransform:"uppercase"}}>{t.priority}</span>
+            </div>
+          );
+        })}
+      </div>
+    )}
 
     {/* Superadmin: Today's Team Selfies */}
     {user.role==="superadmin"&&(
@@ -3017,9 +3069,14 @@ function TicketSystem({ user, users, clients, tickets, setTickets }) {
   const [filter,setFilter]=useState("all");
   const [priorityFilter,setPriorityFilter]=useState("all");
   const [comment,setComment]=useState("");
-  const [form,setForm]=useState({title:"",description:"",type:"internal",priority:"medium",assigneeId:"",clientId:""});
+  const [form,setForm]=useState({title:"",description:"",type:"internal",priority:"medium",assigneeId:"",clientId:"",attachment:null,attachmentPreview:""});
 
-  const filtered=tickets.filter(t=>{
+  // Visibility: SuperAdmin sees all, others see only their created or assigned tickets
+  const myTickets=tickets.filter(t=>{
+    if(user.role==="superadmin") return true;
+    return String(t.createdBy)===String(user.id) || String(t.assigneeId)===String(user.id);
+  });
+  const filtered=myTickets.filter(t=>{
     if(filter!=="all"&&t.status!==filter) return false;
     if(priorityFilter!=="all"&&t.priority!==priorityFilter) return false;
     return true;
@@ -3029,22 +3086,34 @@ function TicketSystem({ user, users, clients, tickets, setTickets }) {
   const statusColors={open:"#2563EB",in_progress:"#D97706",resolved:"#16A34A",closed:"#94A3B8"};
   const typeLabels={internal:"Internal Task",client:"Client Request",support:"Support Ticket"};
 
+  function handleFileAttach(e){
+    const file=e.target.files[0];
+    if(!file) return;
+    const reader=new FileReader();
+    reader.onload=(ev)=>{
+      setForm(p=>({...p,attachment:ev.target.result,attachmentPreview:file.name}));
+    };
+    reader.readAsDataURL(file);
+  }
+
   function createTicket(){
     if(!form.title.trim()) return;
     const ticket={
       id:Date.now(),
-      ...form,
+      title:form.title,description:form.description,type:form.type,priority:form.priority,
+      assigneeId:form.assigneeId?parseInt(form.assigneeId):null,
+      clientId:form.clientId?parseInt(form.clientId):null,
+      attachment:form.attachment||null,
+      attachmentName:form.attachmentPreview||null,
       status:"open",
       createdBy:user.id,
       createdAt:new Date().toISOString(),
       comments:[],
-      assigneeId:form.assigneeId?parseInt(form.assigneeId):null,
-      clientId:form.clientId?parseInt(form.clientId):null
     };
     setTickets(p=>[ticket,...p]);
     if(supabase) supabase.from("flow_tickets").insert(ticket).then(()=>{}).catch(()=>{});
     setShowModal(false);
-    setForm({title:"",description:"",type:"internal",priority:"medium",assigneeId:"",clientId:""});
+    setForm({title:"",description:"",type:"internal",priority:"medium",assigneeId:"",clientId:"",attachment:null,attachmentPreview:""});
   }
 
   function updateStatus(id,status){
@@ -3073,9 +3142,9 @@ function TicketSystem({ user, users, clients, tickets, setTickets }) {
 
   const getUser=id=>users.find(u=>u.id===id||String(u.id)===String(id));
   const getClient=id=>clients.find(c=>c.id===id||String(c.id)===String(id));
-  const openCount=tickets.filter(t=>t.status==="open").length;
-  const inProgressCount=tickets.filter(t=>t.status==="in_progress").length;
-  const resolvedCount=tickets.filter(t=>t.status==="resolved").length;
+  const openCount=myTickets.filter(t=>t.status==="open").length;
+  const inProgressCount=myTickets.filter(t=>t.status==="in_progress").length;
+  const resolvedCount=myTickets.filter(t=>t.status==="resolved").length;
 
   return(
     <div>
@@ -3096,7 +3165,7 @@ function TicketSystem({ user, users, clients, tickets, setTickets }) {
           <div className="stat-label">Resolved</div><div className="stat-value" style={{color:"#16A34A"}}>{resolvedCount}</div>
         </div>
         <div className="stat-card" style={{cursor:"pointer",border:filter==="all"?"2px solid var(--accent)":"1px solid var(--border)"}} onClick={()=>setFilter("all")}>
-          <div className="stat-label">Total</div><div className="stat-value">{tickets.length}</div>
+          <div className="stat-label">Total</div><div className="stat-value">{myTickets.length}</div>
         </div>
       </div>
 
@@ -3170,7 +3239,17 @@ function TicketSystem({ user, users, clients, tickets, setTickets }) {
               </select>
             </div>
           </div>
-          <button className="btn btn-primary w-full" style={{justifyContent:"center",marginTop:12}} onClick={createTicket}>Create Ticket</button>
+          <div className="form-group" style={{gridColumn:"1/3"}}>
+            <label className="form-label">Attachment (optional)</label>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <label style={{padding:"8px 16px",borderRadius:8,border:"1px solid var(--border)",background:"var(--surface)",cursor:"pointer",fontSize:12,color:"var(--ink)"}}>
+                📎 Choose File
+                <input type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" onChange={handleFileAttach} style={{display:"none"}} />
+              </label>
+              {form.attachmentPreview&&<span style={{fontSize:11,color:"var(--accent)",fontWeight:500}}>{form.attachmentPreview} ✓</span>}
+            </div>
+          </div>
+          <button className="btn btn-primary w-full" style={{justifyContent:"center",marginTop:12,gridColumn:"1/3"}} onClick={createTicket}>Create Ticket</button>
         </Modal>
       )}
 
@@ -3184,6 +3263,16 @@ function TicketSystem({ user, users, clients, tickets, setTickets }) {
                 <div style={{fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:"var(--ink-muted)",marginBottom:6}}>Description</div>
                 <div style={{fontSize:13,color:"var(--ink)",lineHeight:1.6,padding:12,background:"var(--surface2)",borderRadius:8}}>{viewTicket.description||"No description provided."}</div>
               </div>
+              {/* Attachment */}
+              {viewTicket.attachment&&(
+                <div style={{marginBottom:16}}>
+                  <div style={{fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:"var(--ink-muted)",marginBottom:6}}>Attachment</div>
+                  {viewTicket.attachment.startsWith("data:image")?
+                    <img src={viewTicket.attachment} style={{maxWidth:"100%",maxHeight:300,borderRadius:8,border:"1px solid var(--border)"}} alt="attachment" />
+                    :<a href={viewTicket.attachment} download={viewTicket.attachmentName||"attachment"} style={{fontSize:12,color:"var(--accent)",fontWeight:600}}>📎 {viewTicket.attachmentName||"Download Attachment"}</a>
+                  }
+                </div>
+              )}
               {/* Comments */}
               <div>
                 <div style={{fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:"var(--ink-muted)",marginBottom:8}}>Comments ({(viewTicket.comments||[]).length})</div>
@@ -3587,7 +3676,7 @@ export default function App() {
             </div>
           </div>
           <div className="content" style={{paddingRight:0}}>
-            {active==="dashboard"&&<div style={{paddingRight:24}}><Dashboard user={user} users={users} clients={clients} content={content} setContent={setContent} attendance={attendance} dark={dark} plannerEvents={plannerEvents} calendar={calendar} /></div>}
+            {active==="dashboard"&&<div style={{paddingRight:24}}><Dashboard user={user} users={users} clients={clients} content={content} setContent={setContent} attendance={attendance} dark={dark} plannerEvents={plannerEvents} calendar={calendar} tickets={tickets} setActive={setActive} /></div>}
             {active==="clients"&&<div style={{paddingRight:24}}><Clients user={user} clients={clients} setClients={setClients} /></div>}
             {active==="calendar"&&<div style={{paddingRight:24}}><ContentCalendar user={user} clients={clients} calendar={calendar} setCalendar={setCalendar} users={users} /></div>}
             {active==="content"&&<div style={{paddingRight:24}}><Content user={user} clients={clients} content={content} setContent={setContent} users={users} /></div>}
