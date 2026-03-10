@@ -2378,7 +2378,7 @@ function PlannerCalendar({ user, plannerEvents={}, setPlannerEvents }) {
     setPlannerEvents(p=>({...p,[user.id]:next}));
   }
   const [selDate,setSelDate]=useState(todayISO());
-  const [todos,setTodos]=useState(()=>{try{return JSON.parse(localStorage.getItem("flow_todos_"+user.id))||[];}catch{return[];}});
+  const [todos,setTodos]=useState([]);
   const [newTodo,setNewTodo]=useState("");
   const [cal,setCal]=useState(()=>{const d=new Date();return{year:d.getFullYear(),month:d.getMonth()};});
   const [showModal,setShowModal]=useState(false);const [editEv,setEditEv]=useState(null);
@@ -2396,10 +2396,34 @@ function PlannerCalendar({ user, plannerEvents={}, setPlannerEvents }) {
   function delEv(id){setEvents(prev=>prev.filter(e=>e.id!==id));setShowModal(false);}
   const selDisplay=new Date(selDate+"T12:00").toLocaleDateString("en-IN",{weekday:"long",day:"numeric",month:"long"});
   const [nowTime,setNowTime]=useState(()=>new Date());
-  useEffect(()=>{try{localStorage.setItem("flow_todos_"+user.id,JSON.stringify(todos));}catch{}},[todos]);
-  function addTodo(){if(!newTodo.trim())return;setTodos(p=>[...p,{id:Date.now(),text:newTodo.trim(),done:false,createdAt:todayISO()}]);setNewTodo("");}
-  function toggleTodo(id){setTodos(p=>p.map(t=>t.id===id?{...t,done:!t.done}:t));}
-  function deleteTodo(id){setTodos(p=>p.filter(t=>t.id!==id));}
+  // Load todos from Supabase on mount
+  useEffect(()=>{
+    if(!supabase) return;
+    supabase.from("flow_todos").select("*").eq("userId",user.id).order("id",{ascending:true}).then(({data})=>{
+      if(data) setTodos(data);
+    });
+  },[]);
+  function addTodo(){
+    if(!newTodo.trim())return;
+    const todo={id:Date.now(),text:newTodo.trim(),done:false,createdAt:todayISO(),userId:user.id};
+    setTodos(p=>[...p,todo]);
+    setNewTodo("");
+    if(supabase) supabase.from("flow_todos").insert(todo).then(()=>{}).catch(()=>{});
+  }
+  function toggleTodo(id){
+    setTodos(p=>p.map(t=>{
+      if(t.id===id){
+        const updated={...t,done:!t.done};
+        if(supabase) supabase.from("flow_todos").update({done:updated.done}).eq("id",id).then(()=>{}).catch(()=>{});
+        return updated;
+      }
+      return t;
+    }));
+  }
+  function deleteTodo(id){
+    setTodos(p=>p.filter(t=>t.id!==id));
+    if(supabase) supabase.from("flow_todos").delete().eq("id",id).then(()=>{}).catch(()=>{});
+  }
   const isToday=selDate===todayISO();
   useEffect(()=>{const iv=setInterval(()=>setNowTime(new Date()),30000);return()=>clearInterval(iv);},[]);
   const currentHour=nowTime.getHours();
