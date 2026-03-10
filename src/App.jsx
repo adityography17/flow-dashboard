@@ -690,6 +690,7 @@ function Sidebar({ user, active, setActive, pendingCount, chatUnread, collapsed,
     {label:"Main",items:[{key:"dashboard",icon:"◈",label:"Dashboard"},{key:"punch",icon:"⏱",label:"Attendance"},{key:"notes",icon:"✦",label:"My Planner"},{key:"chat",icon:"💬",label:"Team Chat",badge:chatUnread}]},
     {label:"Clients",items:[{key:"clients",icon:"◉",label:"Clients"},{key:"calendar",icon:"⊞",label:"Content Calendar"},{key:"content",icon:"◫",label:"Content"}]},
     ...(isAdmin?[{label:"Admin",items:[{key:"approvals",icon:"✓",label:"Approvals",badge:pendingCount},...(isSA?[{key:"hr",icon:"⊕",label:"HR & Team"},{key:"assessment",icon:"◐",label:"AI Assessment"},{key:"logins",icon:"⊗",label:"User Logins"}]:[])]}]:[{label:"HR",items:[{key:"hr",icon:"⊕",label:"My Leaves"}]}]),
+    {label:"Support",items:[{key:"tickets",icon:"🎫",label:"Tickets"}]},
     {label:"Account",items:[{key:"settings",icon:"⚙",label:"Settings"}]}
   ];
   return (
@@ -3008,6 +3009,245 @@ function ChatPage({ user, users, messages, setMessages, onlineIds }) {
 
 
 // ─── APP ROOT ─────────────────────────────────────────────────────────────────
+
+// ─── TICKET MANAGEMENT ────────────────────────────────────────────────────────
+function TicketSystem({ user, users, clients, tickets, setTickets }) {
+  const [showModal,setShowModal]=useState(false);
+  const [viewTicket,setViewTicket]=useState(null);
+  const [filter,setFilter]=useState("all");
+  const [priorityFilter,setPriorityFilter]=useState("all");
+  const [comment,setComment]=useState("");
+  const [form,setForm]=useState({title:"",description:"",type:"internal",priority:"medium",assigneeId:"",clientId:""});
+
+  const filtered=tickets.filter(t=>{
+    if(filter!=="all"&&t.status!==filter) return false;
+    if(priorityFilter!=="all"&&t.priority!==priorityFilter) return false;
+    return true;
+  });
+
+  const priorityColors={low:"#16A34A",medium:"#D97706",high:"#EA580C",urgent:"#DC2626"};
+  const statusColors={open:"#2563EB",in_progress:"#D97706",resolved:"#16A34A",closed:"#94A3B8"};
+  const typeLabels={internal:"Internal Task",client:"Client Request",support:"Support Ticket"};
+
+  function createTicket(){
+    if(!form.title.trim()) return;
+    const ticket={
+      id:Date.now(),
+      ...form,
+      status:"open",
+      createdBy:user.id,
+      createdAt:new Date().toISOString(),
+      comments:[],
+      assigneeId:form.assigneeId?parseInt(form.assigneeId):null,
+      clientId:form.clientId?parseInt(form.clientId):null
+    };
+    setTickets(p=>[ticket,...p]);
+    if(supabase) supabase.from("flow_tickets").insert(ticket).then(()=>{}).catch(()=>{});
+    setShowModal(false);
+    setForm({title:"",description:"",type:"internal",priority:"medium",assigneeId:"",clientId:""});
+  }
+
+  function updateStatus(id,status){
+    setTickets(p=>p.map(t=>t.id===id?{...t,status}:t));
+    if(supabase) supabase.from("flow_tickets").update({status}).eq("id",id).then(()=>{}).catch(()=>{});
+    if(viewTicket?.id===id) setViewTicket(p=>({...p,status}));
+  }
+
+  function addComment(id){
+    if(!comment.trim()) return;
+    const c={id:Date.now(),text:comment.trim(),by:user.id,at:new Date().toISOString()};
+    const ticket=tickets.find(t=>t.id===id);
+    const newComments=[...(ticket.comments||[]),c];
+    setTickets(p=>p.map(t=>t.id===id?{...t,comments:newComments}:t));
+    if(supabase) supabase.from("flow_tickets").update({comments:newComments}).eq("id",id).then(()=>{}).catch(()=>{});
+    setViewTicket(p=>({...p,comments:newComments}));
+    setComment("");
+  }
+
+  function assignTicket(id,assigneeId){
+    const aid=assigneeId?parseInt(assigneeId):null;
+    setTickets(p=>p.map(t=>t.id===id?{...t,assigneeId:aid}:t));
+    if(supabase) supabase.from("flow_tickets").update({assigneeId:aid}).eq("id",id).then(()=>{}).catch(()=>{});
+    if(viewTicket?.id===id) setViewTicket(p=>({...p,assigneeId:aid}));
+  }
+
+  const getUser=id=>users.find(u=>u.id===id||String(u.id)===String(id));
+  const getClient=id=>clients.find(c=>c.id===id||String(c.id)===String(id));
+  const openCount=tickets.filter(t=>t.status==="open").length;
+  const inProgressCount=tickets.filter(t=>t.status==="in_progress").length;
+  const resolvedCount=tickets.filter(t=>t.status==="resolved").length;
+
+  return(
+    <div>
+      <div className="section-header">
+        <div><h1 className="section-title">Tickets</h1><p className="section-sub">Manage support tickets, tasks & client requests</p></div>
+        <button className="btn btn-primary" onClick={()=>setShowModal(true)}>+ New Ticket</button>
+      </div>
+
+      {/* Stats */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:20}}>
+        <div className="stat-card" style={{cursor:"pointer",border:filter==="open"?"2px solid #2563EB":"1px solid var(--border)"}} onClick={()=>setFilter(filter==="open"?"all":"open")}>
+          <div className="stat-label">Open</div><div className="stat-value" style={{color:"#2563EB"}}>{openCount}</div>
+        </div>
+        <div className="stat-card" style={{cursor:"pointer",border:filter==="in_progress"?"2px solid #D97706":"1px solid var(--border)"}} onClick={()=>setFilter(filter==="in_progress"?"all":"in_progress")}>
+          <div className="stat-label">In Progress</div><div className="stat-value" style={{color:"#D97706"}}>{inProgressCount}</div>
+        </div>
+        <div className="stat-card" style={{cursor:"pointer",border:filter==="resolved"?"2px solid #16A34A":"1px solid var(--border)"}} onClick={()=>setFilter(filter==="resolved"?"all":"resolved")}>
+          <div className="stat-label">Resolved</div><div className="stat-value" style={{color:"#16A34A"}}>{resolvedCount}</div>
+        </div>
+        <div className="stat-card" style={{cursor:"pointer",border:filter==="all"?"2px solid var(--accent)":"1px solid var(--border)"}} onClick={()=>setFilter("all")}>
+          <div className="stat-label">Total</div><div className="stat-value">{tickets.length}</div>
+        </div>
+      </div>
+
+      {/* Filters */}
+      <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
+        <select className="form-input form-select" style={{width:140,height:32,fontSize:12}} value={priorityFilter} onChange={e=>setPriorityFilter(e.target.value)}>
+          <option value="all">All Priorities</option>
+          <option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="urgent">Urgent</option>
+        </select>
+      </div>
+
+      {/* Ticket List */}
+      {filtered.length===0&&<div className="empty">No tickets found.</div>}
+      {filtered.map(t=>{
+        const creator=getUser(t.createdBy);
+        const assignee=t.assigneeId?getUser(t.assigneeId):null;
+        const client=t.clientId?getClient(t.clientId):null;
+        return(
+          <div key={t.id} onClick={()=>setViewTicket(t)} style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,padding:"14px 18px",marginBottom:10,cursor:"pointer",transition:"all 0.15s",borderLeft:`4px solid ${priorityColors[t.priority]||"var(--border)"}`}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                  <span style={{fontWeight:600,fontSize:13,color:"var(--ink)"}}>{t.title}</span>
+                  <span style={{fontSize:9,padding:"2px 8px",borderRadius:10,background:statusColors[t.status]+"20",color:statusColors[t.status],fontWeight:700,textTransform:"uppercase"}}>{t.status?.replace("_"," ")}</span>
+                  <span style={{fontSize:9,padding:"2px 8px",borderRadius:10,background:priorityColors[t.priority]+"15",color:priorityColors[t.priority],fontWeight:700,textTransform:"uppercase"}}>{t.priority}</span>
+                </div>
+                <div style={{fontSize:11,color:"var(--ink-muted)",marginTop:4,display:"flex",gap:12,flexWrap:"wrap"}}>
+                  <span>{typeLabels[t.type]||t.type}</span>
+                  {client&&<span>Client: {client.name}</span>}
+                  {assignee&&<span>→ {assignee.name}</span>}
+                  <span>By {creator?.name||"Unknown"}</span>
+                  <span>{new Date(t.createdAt).toLocaleDateString("en-IN",{day:"numeric",month:"short"})}</span>
+                  {(t.comments||[]).length>0&&<span>💬 {t.comments.length}</span>}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+
+      {/* New Ticket Modal */}
+      {showModal&&(
+        <Modal title="New Ticket" onClose={()=>setShowModal(false)} lg>
+          <div className="form-group"><label className="form-label">Title</label>
+            <input className="form-input" value={form.title} onChange={e=>setForm(p=>({...p,title:e.target.value}))} placeholder="Brief summary..." />
+          </div>
+          <div className="form-group"><label className="form-label">Description</label>
+            <textarea className="form-input" rows={3} value={form.description} onChange={e=>setForm(p=>({...p,description:e.target.value}))} placeholder="Describe the issue or task..." style={{resize:"vertical"}} />
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <div className="form-group"><label className="form-label">Type</label>
+              <select className="form-input form-select" value={form.type} onChange={e=>setForm(p=>({...p,type:e.target.value}))}>
+                <option value="internal">Internal Task</option><option value="client">Client Request</option><option value="support">Support Ticket</option>
+              </select>
+            </div>
+            <div className="form-group"><label className="form-label">Priority</label>
+              <select className="form-input form-select" value={form.priority} onChange={e=>setForm(p=>({...p,priority:e.target.value}))}>
+                <option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="urgent">Urgent</option>
+              </select>
+            </div>
+            <div className="form-group"><label className="form-label">Assign To</label>
+              <select className="form-input form-select" value={form.assigneeId} onChange={e=>setForm(p=>({...p,assigneeId:e.target.value}))}>
+                <option value="">Unassigned</option>
+                {users.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}
+              </select>
+            </div>
+            <div className="form-group"><label className="form-label">Client (optional)</label>
+              <select className="form-input form-select" value={form.clientId} onChange={e=>setForm(p=>({...p,clientId:e.target.value}))}>
+                <option value="">None</option>
+                {clients.filter(c=>c.status==="active").map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+          </div>
+          <button className="btn btn-primary w-full" style={{justifyContent:"center",marginTop:12}} onClick={createTicket}>Create Ticket</button>
+        </Modal>
+      )}
+
+      {/* Ticket Detail Modal */}
+      {viewTicket&&(
+        <Modal title={viewTicket.title} onClose={()=>{setViewTicket(null);setComment("");}} xl>
+          <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:20}}>
+            <div>
+              {/* Description */}
+              <div style={{marginBottom:16}}>
+                <div style={{fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:"var(--ink-muted)",marginBottom:6}}>Description</div>
+                <div style={{fontSize:13,color:"var(--ink)",lineHeight:1.6,padding:12,background:"var(--surface2)",borderRadius:8}}>{viewTicket.description||"No description provided."}</div>
+              </div>
+              {/* Comments */}
+              <div>
+                <div style={{fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:"var(--ink-muted)",marginBottom:8}}>Comments ({(viewTicket.comments||[]).length})</div>
+                {(viewTicket.comments||[]).map(c=>{
+                  const commenter=getUser(c.by);
+                  return(
+                    <div key={c.id} style={{display:"flex",gap:10,marginBottom:10,padding:10,background:"var(--surface2)",borderRadius:8}}>
+                      <div className="avatar" style={{width:28,height:28,fontSize:10}}>{commenter?.avatar||"?"}</div>
+                      <div style={{flex:1}}>
+                        <div style={{display:"flex",justifyContent:"space-between"}}>
+                          <span style={{fontSize:12,fontWeight:600,color:"var(--ink)"}}>{commenter?.name||"Unknown"}</span>
+                          <span style={{fontSize:10,color:"var(--ink-muted)"}}>{new Date(c.at).toLocaleString("en-IN",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}</span>
+                        </div>
+                        <div style={{fontSize:12,color:"var(--ink)",marginTop:4,lineHeight:1.5}}>{c.text}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+                {(viewTicket.comments||[]).length===0&&<p className="text-muted text-sm">No comments yet.</p>}
+                <div style={{display:"flex",gap:8,marginTop:10}}>
+                  <input className="form-input" value={comment} onChange={e=>setComment(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addComment(viewTicket.id)} placeholder="Add a comment..." style={{flex:1}} />
+                  <button className="btn btn-primary" onClick={()=>addComment(viewTicket.id)}>Send</button>
+                </div>
+              </div>
+            </div>
+            {/* Right sidebar */}
+            <div>
+              <div style={{fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:"var(--ink-muted)",marginBottom:8}}>Details</div>
+              <div style={{background:"var(--surface2)",borderRadius:10,padding:14}}>
+                <div style={{marginBottom:12}}><div style={{fontSize:10,color:"var(--ink-muted)"}}>Status</div>
+                  <select className="form-input form-select" style={{marginTop:4,height:32,fontSize:12}} value={viewTicket.status} onChange={e=>updateStatus(viewTicket.id,e.target.value)}>
+                    <option value="open">Open</option><option value="in_progress">In Progress</option><option value="resolved">Resolved</option><option value="closed">Closed</option>
+                  </select>
+                </div>
+                <div style={{marginBottom:12}}><div style={{fontSize:10,color:"var(--ink-muted)"}}>Priority</div>
+                  <div style={{fontSize:12,fontWeight:700,color:priorityColors[viewTicket.priority],marginTop:4,textTransform:"uppercase"}}>{viewTicket.priority}</div>
+                </div>
+                <div style={{marginBottom:12}}><div style={{fontSize:10,color:"var(--ink-muted)"}}>Type</div>
+                  <div style={{fontSize:12,color:"var(--ink)",marginTop:4}}>{typeLabels[viewTicket.type]||viewTicket.type}</div>
+                </div>
+                <div style={{marginBottom:12}}><div style={{fontSize:10,color:"var(--ink-muted)"}}>Assigned To</div>
+                  <select className="form-input form-select" style={{marginTop:4,height:32,fontSize:12}} value={viewTicket.assigneeId||""} onChange={e=>assignTicket(viewTicket.id,e.target.value)}>
+                    <option value="">Unassigned</option>
+                    {users.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}
+                  </select>
+                </div>
+                {viewTicket.clientId&&<div style={{marginBottom:12}}><div style={{fontSize:10,color:"var(--ink-muted)"}}>Client</div>
+                  <div style={{fontSize:12,color:"var(--ink)",marginTop:4}}>{getClient(viewTicket.clientId)?.name||"—"}</div>
+                </div>}
+                <div style={{marginBottom:12}}><div style={{fontSize:10,color:"var(--ink-muted)"}}>Created By</div>
+                  <div style={{fontSize:12,color:"var(--ink)",marginTop:4}}>{getUser(viewTicket.createdBy)?.name||"Unknown"}</div>
+                </div>
+                <div><div style={{fontSize:10,color:"var(--ink-muted)"}}>Created</div>
+                  <div style={{fontSize:12,color:"var(--ink)",marginTop:4}}>{new Date(viewTicket.createdAt).toLocaleString("en-IN",{day:"numeric",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"})}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   // ── State ──────────────────────────────────────────────────────────────────
   const [users,setUsersRaw]       = useState(INITIAL_USERS);
@@ -3021,6 +3261,7 @@ export default function App() {
   const [attendance,setAttendanceRaw] = useState([]);
   const [messages,setMessagesRaw]  = useState([]);
   const [plannerEvents,setPlannerEventsRaw] = useState({});
+  const [tickets,setTicketsRaw] = useState([]);
   const [onlineIds,setOnlineIds]   = useState([]);
   const [phase,setPhase]           = useState(0);
   const [chatNotif,setChatNotif]   = useState(null);
@@ -3074,7 +3315,7 @@ export default function App() {
       
       // Load all tables in parallel
       try {
-        const [u,cl,co,ca,lv,at,ms,pl] = await Promise.all([
+        const [u,cl,co,ca,lv,at,ms,pl,tk] = await Promise.all([
           supabase.from("flow_users").select("*"),
           supabase.from("flow_clients").select("*"),
           supabase.from("flow_content").select("*"),
@@ -3083,6 +3324,7 @@ export default function App() {
           supabase.from("flow_attendance").select("*"),
           supabase.from("flow_messages").select("*").order("id",{ascending:true}),
           supabase.from("flow_planner").select("*"),
+          supabase.from("flow_tickets").select("*").order("id",{ascending:false}),
         ]);
 
         if(u.data?.length) {
@@ -3099,7 +3341,8 @@ export default function App() {
         if(at.data) setAttendanceRaw(at.data);
         if(ms.data) setMessagesRaw(ms.data);
         if(pl.data) {
-          const map={};
+          const map={}
+        if(tk.data) setTicketsRaw(tk.data);;
           pl.data.forEach(r=>{ map[r.userId]=r.events||[]; });
           setPlannerEventsRaw(map);
         }
@@ -3185,6 +3428,11 @@ export default function App() {
         setPlannerEventsRaw(prev=>({...prev,[payload.new.userId]:payload.new.events||[]}));
       }
     });
+    sub("flow_tickets", (payload)=>{
+      if(payload.eventType==="INSERT") setTicketsRaw(prev=>{if(prev.find(t=>t.id===payload.new.id))return prev;return[payload.new,...prev];});
+      if(payload.eventType==="UPDATE") setTicketsRaw(prev=>prev.map(t=>t.id===payload.new.id?payload.new:t));
+      if(payload.eventType==="DELETE") setTicketsRaw(prev=>prev.filter(t=>t.id!==payload.old.id));
+    });
 
     // Users
     sub("flow_users", (payload)=>{
@@ -3200,6 +3448,10 @@ export default function App() {
   },[dbReady, user?.id]);
 
   // ── Simple setters: update state + write to Supabase ─────────────────────
+  async function setTickets(updater) {
+    const v = typeof updater==="function" ? updater(tickets) : updater;
+    setTicketsRaw(v);
+  }
   async function setUsers(u) {
     const v=typeof u==="function"?u(users):u;
     setUsersRaw(v);
@@ -3285,7 +3537,7 @@ export default function App() {
     setUser(p=>({...p,password:newPw}));
   }
 
-  const titles={dashboard:"Dashboard",clients:"Clients",calendar:"Content Calendar",content:"Content",approvals:"Approvals",punch:"Attendance",hr:"HR & Team",assessment:"AI Assessment",logins:"User Logins",notes:"My Planner",chat:"Team Chat",settings:"Settings"};
+  const titles={dashboard:"Dashboard",tickets:"Tickets",clients:"Clients",calendar:"Content Calendar",content:"Content",approvals:"Approvals",punch:"Attendance",hr:"HR & Team",assessment:"AI Assessment",logins:"User Logins",notes:"My Planner",chat:"Team Chat",settings:"Settings"};
   const pendingCount=content.filter(c=>(user?.role==="admin"&&c.status==="pending_admin")||(user?.role==="superadmin"&&(c.status==="pending_superadmin"||c.status==="pending_admin"))).length;
 
   // ── Login screen ───────────────────────────────────────────────────────────
@@ -3346,6 +3598,7 @@ export default function App() {
             {active==="notes"&&<div style={{paddingRight:24}}><PlannerCalendar user={user} plannerEvents={plannerEvents} setPlannerEvents={setPlannerEvents} /></div>}
             {active==="logins"&&user.role==="superadmin"&&<div style={{paddingRight:24}}><UserLogins users={users} setUsers={setUsers} currentUser={user} setCurrentUser={setUser} /></div>}
             {active==="chat"&&<ChatPage user={user} users={users} messages={messages} setMessages={setMessages} onlineIds={onlineIds} />}
+            {active==="tickets"&&<div style={{paddingRight:24}}><TicketSystem user={user} users={users} clients={clients} tickets={tickets} setTickets={setTickets} /></div>}
             {active==="settings"&&<div style={{paddingRight:24}}><Settings user={user} users={users} setUsers={setUsers} dark={dark} setDark={handleSetDark} onPasswordChange={handlePasswordChange} /></div>}
           </div>
         </div>
